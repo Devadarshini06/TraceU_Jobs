@@ -23,7 +23,8 @@ func main() {
 		AllowMethods: "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 	}))
 
-	// 3. Register Routes
+	// 3. Static uploads & Routes
+	app.Static("/uploads", "./uploads")
 	routes.SetupRoutes(app)
 
 	// 4. Start Server

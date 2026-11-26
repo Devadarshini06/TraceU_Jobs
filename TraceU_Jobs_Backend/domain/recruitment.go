@@ -55,6 +55,7 @@ type Candidate struct {
 	InTalentPool bool      `gorm:"column:in_talent_pool;default:false;not null" json:"in_talent_pool"`
 	GithubURL    string    `gorm:"column:github_url;size:255" json:"github_url"`
 	LinkedInURL  string    `gorm:"column:linkedin_url;size:255" json:"linkedin_url"`
+	PhotoURL     string    `gorm:"column:photo_url;type:longtext" json:"photo_url"`
 	ResumeURL    string    `gorm:"column:resume_url;size:255" json:"resume_url"`
 	ResumeName   string    `gorm:"column:resume_name;size:255" json:"resume_name"`
 	ResumeSize   string    `gorm:"column:resume_size;size:40" json:"resume_size"`

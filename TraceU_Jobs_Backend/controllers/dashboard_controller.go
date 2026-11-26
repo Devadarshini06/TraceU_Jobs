@@ -1316,6 +1316,7 @@ func CreateCandidate(c *fiber.Ctx) error {
 		Status:      status,
 		GithubURL:   strings.TrimSpace(req.GithubURL),
 		LinkedInURL: strings.TrimSpace(req.LinkedInURL),
+		PhotoURL:    strings.TrimSpace(req.PhotoURL),
 	}
 
 	if result := database.DB.Create(&cand); result.Error != nil {
@@ -1404,6 +1405,9 @@ func UpdateCandidate(c *fiber.Ctx) error {
 	}
 	if req.LinkedInURL != "" {
 		cand.LinkedInURL = strings.TrimSpace(req.LinkedInURL)
+	}
+	if req.PhotoURL != "" {
+		cand.PhotoURL = strings.TrimSpace(req.PhotoURL)
 	}
 
 	if result := database.DB.Save(&cand); result.Error != nil {

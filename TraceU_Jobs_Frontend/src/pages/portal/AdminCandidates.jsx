@@ -341,7 +341,8 @@ function mapBackendCandidate(item) {
     name: item?.name || 'Candidate',
     email: item?.email || '',
     phone: item?.phone || '—',
-    avatar: CAND_AVATARS[(Number(item?.id) || 0) % CAND_AVATARS.length],
+    avatar: item?.photo_url || CAND_AVATARS[(Number(item?.id) || 0) % CAND_AVATARS.length],
+    photoUrl: item?.photo_url || '',
     role: item?.current_role || 'Software Engineer',
     dept: item?.department || 'Engineering',
     exp: item?.experience || '2+ yrs',
@@ -429,6 +430,7 @@ export default function AdminCandidates() {
   const [newStatus, setNewStatus] = useState('Active');
   const [newGithub, setNewGithub] = useState('');
   const [newLinkedin, setNewLinkedin] = useState('');
+  const [newPhoto, setNewPhoto] = useState('');
   const [addErrors, setAddErrors] = useState({});
 
   useEffect(() => {
@@ -549,6 +551,7 @@ export default function AdminCandidates() {
     setNewStatus('Active');
     setNewGithub('');
     setNewLinkedin('');
+    setNewPhoto('');
     setAddErrors({});
   };
 
@@ -566,6 +569,7 @@ export default function AdminCandidates() {
     setNewStatus(cand.status || 'Active');
     setNewGithub(cand.githubUrl || '');
     setNewLinkedin(cand.linkedinUrl || '');
+    setNewPhoto(cand.photoUrl || '');
     setAddErrors({});
     setAddDialogOpen(true);
   };
@@ -632,7 +636,8 @@ export default function AdminCandidates() {
       source: newSource,
       status: newStatus,
       github_url: newGithub.trim(),
-      linkedin_url: newLinkedin.trim()
+      linkedin_url: newLinkedin.trim(),
+      photo_url: newPhoto.trim()
     };
 
     setSubmitting(true);
@@ -2106,6 +2111,46 @@ export default function AdminCandidates() {
         </DialogTitle>
         <DialogContent dividers sx={{ p: 3 }}>
           <Stack spacing={2}>
+            {/* Candidate Photo Upload / URL */}
+            <Stack direction="row" spacing={2} alignItems="center" sx={{ p: 1.5, borderRadius: '12px', bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+              <Avatar src={newPhoto || undefined} sx={{ width: 56, height: 56, bgcolor: '#ede9fe', color: '#6929e2', fontWeight: 700 }}>
+                {newName ? newName.charAt(0).toUpperCase() : 'C'}
+              </Avatar>
+              <Box sx={{ flex: 1 }}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                  <Button variant="outlined" component="label" size="small" startIcon={<UploadOutlined />} sx={{ textTransform: 'none', borderRadius: '8px', fontWeight: 600 }}>
+                    {newPhoto ? 'Change Photo' : 'Upload Photo'}
+                    <input
+                      type="file"
+                      hidden
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          if (typeof reader.result === 'string') setNewPhoto(reader.result);
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </Button>
+                  {newPhoto && (
+                    <Button size="small" color="error" onClick={() => setNewPhoto('')} sx={{ textTransform: 'none' }}>
+                      Remove
+                    </Button>
+                  )}
+                </Stack>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Or paste Photo URL"
+                  placeholder="https://example.com/photo.jpg"
+                  value={newPhoto.startsWith('data:') ? '' : newPhoto}
+                  onChange={(e) => setNewPhoto(e.target.value)}
+                />
+              </Box>
+            </Stack>
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField

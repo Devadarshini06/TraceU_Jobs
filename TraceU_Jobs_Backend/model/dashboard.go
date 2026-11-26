@@ -152,6 +152,7 @@ type CreateCandidateRequest struct {
 	Status      string `json:"status"`
 	GithubURL   string `json:"github_url"`
 	LinkedInURL string `json:"linkedin_url"`
+	PhotoURL    string `json:"photo_url"`
 }
 
 // UpdateCandidateStatusRequest updates a candidate's status or talent pool membership.
