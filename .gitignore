@@ -1,0 +1,17 @@
+# OS & Editor
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Node / Frontend
+node_modules/
+dist/
+*.zip
+.env.local
+
+# Go / Backend
+TraceU_Jobs_Backend/uploads/
+TraceU_Jobs_Backend/*.exe
+TraceU_Jobs_Backend/main
