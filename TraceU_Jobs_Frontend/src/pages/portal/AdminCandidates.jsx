@@ -2117,7 +2117,7 @@ export default function AdminCandidates() {
                 {newName ? newName.charAt(0).toUpperCase() : 'C'}
               </Avatar>
               <Box sx={{ flex: 1 }}>
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <Stack direction="row" spacing={1} alignItems="center">
                   <Button variant="outlined" component="label" size="small" startIcon={<UploadOutlined />} sx={{ textTransform: 'none', borderRadius: '8px', fontWeight: 600 }}>
                     {newPhoto ? 'Change Photo' : 'Upload Photo'}
                     <input
@@ -2141,14 +2141,9 @@ export default function AdminCandidates() {
                     </Button>
                   )}
                 </Stack>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Or paste Photo URL"
-                  placeholder="https://example.com/photo.jpg"
-                  value={newPhoto.startsWith('data:') ? '' : newPhoto}
-                  onChange={(e) => setNewPhoto(e.target.value)}
-                />
+                <Typography sx={{ fontSize: 11.5, color: '#64748b', mt: 0.75 }}>
+                  Upload a candidate profile photo (JPG, PNG, WebP)
+                </Typography>
               </Box>
             </Stack>
             <Grid container spacing={2}>
