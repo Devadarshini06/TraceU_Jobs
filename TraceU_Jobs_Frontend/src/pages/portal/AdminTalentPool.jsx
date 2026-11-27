@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import * as XLSX from 'xlsx';
 import { useNavigate } from 'react-router-dom';
 
 // material-ui
@@ -907,6 +906,7 @@ export default function AdminTalentPool() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array' });
       const sheetName = wb.SheetNames[0];

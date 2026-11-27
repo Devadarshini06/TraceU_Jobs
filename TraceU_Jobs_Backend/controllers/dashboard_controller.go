@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -39,29 +40,115 @@ func GetAdminDashboard(c *fiber.Ctx) error {
 	since := time.Now().AddDate(0, 0, -days)
 
 	var summary model.DashboardSummary
-	database.DB.Model(&domain.Requisition{}).Where("status = ?", "open").Count(&summary.OpenRequisitions)
-	database.DB.Model(&domain.Application{}).Where("applied_at >= ?", since).Count(&summary.TotalApplications)
-	database.DB.Model(&domain.Application{}).Where("applied_at >= ? AND stage = ?", since, "shortlisted").Count(&summary.Shortlisted)
-	database.DB.Model(&domain.Interview{}).Where("scheduled_at >= ? AND status = ?", since, "scheduled").Count(&summary.Interviews)
-	database.DB.Model(&domain.Application{}).Where("applied_at >= ? AND stage = ?", since, "offered").Count(&summary.Offers)
-	database.DB.Model(&domain.Job{}).Where("job_type = ? AND status = ?", "internship", "open").Count(&summary.Internships)
-
-	// Pipeline stage counts
 	type stageRow struct {
 		Stage string
 		Count int64
 	}
-	var stageRows []stageRow
+	type trendRow struct {
+		Day   string
+		Total int64
+		Hired int64
+	}
+	type sourceRow struct {
+		Source string
+		Count  int64
+	}
+
+	var (
+		stageRows   []stageRow
+		trendRows   []trendRow
+		recentApps  []domain.Application
+		upcoming    []domain.Interview
+		topJobs     []model.TopJobItem
+		activities  []domain.ActivityLog
+		sourceRows  []sourceRow
+		avgHireDays float64
+		wg          sync.WaitGroup
+	)
+
+	wg.Add(10)
+	go func() {
+		defer wg.Done()
+		database.DB.Model(&domain.Requisition{}).Where("status = ?", "open").Count(&summary.OpenRequisitions)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Model(&domain.Interview{}).Where("scheduled_at >= ? AND status = ?", since, "scheduled").Count(&summary.Interviews)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Model(&domain.Job{}).Where("job_type = ? AND status IN ?", "internship", []string{"open", "published", "active"}).Count(&summary.Internships)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Model(&domain.Application{}).
+			Select("stage, COUNT(*) as count").
+			Where("applied_at >= ?", since).
+			Group("stage").
+			Scan(&stageRows)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Model(&domain.Application{}).
+			Select("DATE(applied_at) as day, COUNT(*) as total, SUM(CASE WHEN stage = 'hired' THEN 1 ELSE 0 END) as hired").
+			Where("applied_at >= ?", since).
+			Group("DATE(applied_at)").
+			Order("day ASC").
+			Scan(&trendRows)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Preload("Candidate").Preload("Job").
+			Order("applied_at DESC").
+			Limit(5).
+			Find(&recentApps)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Preload("Application.Candidate").Preload("Application.Job").
+			Where("scheduled_at >= ? AND status = ?", time.Now().Add(-24*time.Hour), "scheduled").
+			Order("scheduled_at ASC").
+			Limit(5).
+			Find(&upcoming)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Table("jobs").
+			Select("jobs.id, jobs.title, jobs.views, COUNT(applications.id) as applications").
+			Joins("LEFT JOIN applications ON applications.job_id = jobs.id").
+			Group("jobs.id, jobs.title, jobs.views").
+			Order("applications DESC, jobs.views DESC").
+			Limit(5).
+			Scan(&topJobs)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Order("created_at DESC").Limit(5).Find(&activities)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Table("applications").
+			Select("candidates.source as source, COUNT(applications.id) as count").
+			Joins("JOIN candidates ON candidates.id = applications.candidate_id").
+			Where("applications.applied_at >= ?", since).
+			Group("candidates.source").
+			Order("count DESC").
+			Scan(&sourceRows)
+	}()
+
 	database.DB.Model(&domain.Application{}).
-		Select("stage, COUNT(*) as count").
-		Where("applied_at >= ?", since).
-		Group("stage").
-		Scan(&stageRows)
+		Select("COALESCE(AVG(TIMESTAMPDIFF(DAY, applied_at, updated_at)), 0)").
+		Where("stage = ?", "hired").
+		Scan(&avgHireDays)
+	wg.Wait()
 
 	stageMap := make(map[string]int64, len(stageRows))
 	for _, r := range stageRows {
 		stageMap[r.Stage] = r.Count
+		summary.TotalApplications += r.Count
 	}
+	summary.Shortlisted = stageMap["shortlisted"]
+	summary.Offers = stageMap["offered"]
 
 	pipelineStages := make([]model.PipelineStageItem, 0, len(pipelineStageOrder))
 	for _, stage := range pipelineStageOrder {
@@ -77,20 +164,6 @@ func GetAdminDashboard(c *fiber.Ctx) error {
 		})
 	}
 
-	// Pipeline trend grouped by day
-	type trendRow struct {
-		Day   string
-		Total int64
-		Hired int64
-	}
-	var trendRows []trendRow
-	database.DB.Model(&domain.Application{}).
-		Select("DATE(applied_at) as day, COUNT(*) as total, SUM(CASE WHEN stage = 'hired' THEN 1 ELSE 0 END) as hired").
-		Where("applied_at >= ?", since).
-		Group("DATE(applied_at)").
-		Order("day ASC").
-		Scan(&trendRows)
-
 	pipelineTrend := make([]model.PipelineTrendPoint, 0, len(trendRows))
 	for _, r := range trendRows {
 		pipelineTrend = append(pipelineTrend, model.PipelineTrendPoint{
@@ -99,13 +172,6 @@ func GetAdminDashboard(c *fiber.Ctx) error {
 			Hires:        r.Hired,
 		})
 	}
-
-	// Recent applications
-	var recentApps []domain.Application
-	database.DB.Preload("Candidate").Preload("Job").
-		Order("applied_at DESC").
-		Limit(5).
-		Find(&recentApps)
 
 	recentAppItems := make([]model.RecentApplicationItem, 0, len(recentApps))
 	for _, a := range recentApps {
@@ -118,14 +184,6 @@ func GetAdminDashboard(c *fiber.Ctx) error {
 		})
 	}
 
-	// Upcoming interviews
-	var upcoming []domain.Interview
-	database.DB.Preload("Application.Candidate").Preload("Application.Job").
-		Where("scheduled_at >= ? AND status = ?", time.Now().Add(-24*time.Hour), "scheduled").
-		Order("scheduled_at ASC").
-		Limit(5).
-		Find(&upcoming)
-
 	upcomingItems := make([]model.UpcomingInterviewItem, 0, len(upcoming))
 	for _, iv := range upcoming {
 		upcomingItems = append(upcomingItems, model.UpcomingInterviewItem{
@@ -136,34 +194,6 @@ func GetAdminDashboard(c *fiber.Ctx) error {
 			Status:        iv.Status,
 		})
 	}
-
-	// Top jobs by application count
-	var topJobs []model.TopJobItem
-	database.DB.Table("jobs").
-		Select("jobs.id, jobs.title, jobs.views, COUNT(applications.id) as applications").
-		Joins("LEFT JOIN applications ON applications.job_id = jobs.id").
-		Group("jobs.id, jobs.title, jobs.views").
-		Order("applications DESC, jobs.views DESC").
-		Limit(5).
-		Scan(&topJobs)
-
-	// Recent activity
-	var activities []domain.ActivityLog
-	database.DB.Order("created_at DESC").Limit(5).Find(&activities)
-
-	// Insights: applications by source
-	type sourceRow struct {
-		Source string
-		Count  int64
-	}
-	var sourceRows []sourceRow
-	database.DB.Table("applications").
-		Select("candidates.source as source, COUNT(applications.id) as count").
-		Joins("JOIN candidates ON candidates.id = applications.candidate_id").
-		Where("applications.applied_at >= ?", since).
-		Group("candidates.source").
-		Order("count DESC").
-		Scan(&sourceRows)
 
 	sourceBreakdown := make([]model.SourceBreakdownItem, 0, len(sourceRows))
 	topSource := "N/A"
@@ -189,13 +219,6 @@ func GetAdminDashboard(c *fiber.Ctx) error {
 	if offeredTotal > 0 {
 		offerAcceptanceRate = math.Round((float64(hiredCount)/float64(offeredTotal))*1000) / 10
 	}
-
-	// Average time to hire in days for hired applications
-	var avgHireDays float64
-	database.DB.Model(&domain.Application{}).
-		Select("COALESCE(AVG(TIMESTAMPDIFF(DAY, applied_at, updated_at)), 0)").
-		Where("stage = ?", "hired").
-		Scan(&avgHireDays)
 
 	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
 		Success: true,

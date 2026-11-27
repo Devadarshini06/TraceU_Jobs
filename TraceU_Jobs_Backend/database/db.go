@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -42,10 +43,16 @@ func ConnectDB() {
 
 	var err error
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
 		log.Fatalf("❌ Failed to connect to database: %v", err)
+	}
+
+	if sqlDB, err := DB.DB(); err == nil {
+		sqlDB.SetMaxIdleConns(15)
+		sqlDB.SetMaxOpenConns(30)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	}
 
 	log.Println("✅ Database connection established successfully!")

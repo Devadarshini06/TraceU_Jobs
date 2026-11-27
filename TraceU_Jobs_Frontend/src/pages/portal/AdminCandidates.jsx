@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -777,6 +776,7 @@ export default function AdminCandidates() {
   const handleImportFileChange = async (file) => {
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -808,6 +808,7 @@ export default function AdminCandidates() {
         setSnackbar({ open: true, message: 'Please choose an Excel/CSV file or paste CSV rows.', severity: 'warning' });
         return;
       }
+      const XLSX = await import('xlsx');
       const workbook = XLSX.read(trimmed, { type: 'string' });
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const jsonRows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });

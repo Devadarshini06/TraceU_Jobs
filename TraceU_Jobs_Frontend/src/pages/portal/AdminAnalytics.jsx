@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -132,7 +131,8 @@ export default function AdminAnalytics() {
 
   const maxDeptHires = Math.max(1, ...departments.map((d) => d.hires || 0));
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     const kpiSheet = XLSX.utils.json_to_sheet([
       { Metric: 'Date Range', Value: RANGE_LABELS[dateRange] || dateRange },
