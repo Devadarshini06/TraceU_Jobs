@@ -6,6 +6,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -3080,6 +3081,338 @@ func GetInternshipApplications(c *fiber.Ctx) error {
 				"status":    internshipStatusLabel(job.Status),
 			},
 			"applications": apps,
+		},
+	})
+}
+
+// GetAnalytics computes accurate recruitment analytics from live database records for the selected date range.
+func GetAnalytics(c *fiber.Ctx) error {
+	rangeParam := strings.ToLower(strings.TrimSpace(c.Query("range", "30d")))
+	now := time.Now()
+	var startDate time.Time
+	days := 30
+	switch rangeParam {
+	case "7d":
+		days = 7
+		startDate = now.AddDate(0, 0, -7)
+	case "90d":
+		days = 90
+		startDate = now.AddDate(0, 0, -90)
+	case "365d":
+		days = 365
+		startDate = now.AddDate(0, 0, -365)
+	case "all":
+		days = 0
+		startDate = time.Time{}
+	default:
+		days = 30
+		startDate = now.AddDate(0, 0, -30)
+	}
+
+	var apps []domain.Application
+	appQuery := database.DB.Preload("Candidate").Preload("Job")
+	if !startDate.IsZero() {
+		appQuery = appQuery.Where("applied_at >= ?", startDate)
+	}
+	appQuery.Order("applied_at ASC").Find(&apps)
+
+	var activeInternships int64
+	database.DB.Model(&domain.Job{}).
+		Where("job_type = ? AND status IN ?", "internship", []string{"open", "published", "active"}).
+		Count(&activeInternships)
+
+	totalApps := len(apps)
+	qualifiedCount := 0
+	hiredCount := 0
+	offeredOrHiredCount := 0
+	var totalHireDays float64
+
+	stageCounts := map[string]int{
+		"applied":     0,
+		"screening":   0,
+		"shortlisted": 0,
+		"interview":   0,
+		"selected":    0,
+		"offered":     0,
+		"hired":       0,
+	}
+	sourceCounts := make(map[string]int)
+	sourceHires := make(map[string]int)
+	deptHires := make(map[string]int)
+	deptApps := make(map[string]int)
+
+	type jobAgg struct {
+		Title      string
+		Department string
+		Apps       int
+		Hired      int
+		HireDays   float64
+	}
+	jobStats := make(map[uint]*jobAgg)
+
+	for _, a := range apps {
+		st := strings.ToLower(strings.TrimSpace(a.Stage))
+		if _, ok := stageCounts[st]; ok {
+			stageCounts[st]++
+		}
+		if st == "shortlisted" || st == "interview" || st == "selected" || st == "offered" || st == "hired" {
+			qualifiedCount++
+		}
+		if st == "offered" || st == "hired" {
+			offeredOrHiredCount++
+		}
+		if st == "hired" {
+			hiredCount++
+			d := a.UpdatedAt.Sub(a.AppliedAt).Hours() / 24.0
+			if d < 0 {
+				d = 0
+			}
+			totalHireDays += d
+		}
+
+		src := strings.TrimSpace(a.Candidate.Source)
+		if src == "" {
+			src = "Direct Application"
+		}
+		sourceCounts[src]++
+		if st == "hired" {
+			sourceHires[src]++
+		}
+
+		dept := strings.TrimSpace(a.Job.Department)
+		if dept == "" {
+			dept = strings.TrimSpace(a.Candidate.Department)
+		}
+		if dept == "" {
+			dept = "General"
+		}
+		deptApps[dept]++
+		if st == "hired" {
+			deptHires[dept]++
+		}
+
+		if a.JobID > 0 {
+			agg, exists := jobStats[a.JobID]
+			if !exists {
+				title := a.Job.Title
+				if title == "" {
+					title = fmt.Sprintf("Job #%d", a.JobID)
+				}
+				agg = &jobAgg{Title: title, Department: dept}
+				jobStats[a.JobID] = agg
+			}
+			agg.Apps++
+			if st == "hired" {
+				agg.Hired++
+				d := a.UpdatedAt.Sub(a.AppliedAt).Hours() / 24.0
+				if d < 0 {
+					d = 0
+				}
+				agg.HireDays += d
+			}
+		}
+	}
+
+	avgTimeToHire := 0
+	if hiredCount > 0 {
+		avgTimeToHire = int(math.Round(totalHireDays / float64(hiredCount)))
+	}
+	offerAcceptanceRate := 0
+	if offeredOrHiredCount > 0 {
+		offerAcceptanceRate = int(math.Round((float64(hiredCount) / float64(offeredOrHiredCount)) * 100))
+	}
+
+	// Cumulative hiring funnel (each stage includes candidates who reached that stage or beyond)
+	funnelHired := stageCounts["hired"]
+	funnelOffered := funnelHired + stageCounts["offered"]
+	funnelSelected := funnelOffered + stageCounts["selected"]
+	funnelInterview := funnelSelected + stageCounts["interview"]
+	funnelShortlisted := funnelInterview + stageCounts["shortlisted"]
+	funnelScreening := funnelShortlisted + stageCounts["screening"]
+	funnelApplied := totalApps
+
+	pctOfTotal := func(n int) int {
+		if totalApps == 0 {
+			return 0
+		}
+		return int(math.Round((float64(n) / float64(totalApps)) * 100))
+	}
+
+	conversionRate := 0.0
+	if totalApps > 0 {
+		conversionRate = math.Round((float64(hiredCount)/float64(totalApps))*1000) / 10
+	}
+
+	funnel := []fiber.Map{
+		{"stage": "Applied", "count": funnelApplied, "pct": pctOfTotal(funnelApplied), "color": "#530EF0"},
+		{"stage": "Screening", "count": funnelScreening, "pct": pctOfTotal(funnelScreening), "color": "#3B82F6"},
+		{"stage": "Shortlisted", "count": funnelShortlisted, "pct": pctOfTotal(funnelShortlisted), "color": "#06B6D4"},
+		{"stage": "Interview", "count": funnelInterview, "pct": pctOfTotal(funnelInterview), "color": "#F59E0B"},
+		{"stage": "Selected", "count": funnelSelected, "pct": pctOfTotal(funnelSelected), "color": "#EC4899"},
+		{"stage": "Offered", "count": funnelOffered, "pct": pctOfTotal(funnelOffered), "color": "#7C3AED"},
+		{"stage": "Hired", "count": funnelHired, "pct": pctOfTotal(funnelHired), "color": "#10B981"},
+	}
+
+	// 7-bucket Applications & Hiring Trend
+	trendStart := startDate
+	if trendStart.IsZero() {
+		if len(apps) > 0 {
+			trendStart = apps[0].AppliedAt
+		} else {
+			trendStart = now.AddDate(0, 0, -30)
+		}
+	}
+	totalSpan := now.Sub(trendStart)
+	if totalSpan < 24*time.Hour {
+		totalSpan = 7 * 24 * time.Hour
+		trendStart = now.Add(-totalSpan)
+	}
+	bucketCount := 7
+	bucketDur := totalSpan / time.Duration(bucketCount)
+	trend := make([]fiber.Map, 0, bucketCount)
+	for i := 0; i < bucketCount; i++ {
+		bStart := trendStart.Add(time.Duration(i) * bucketDur)
+		bEnd := trendStart.Add(time.Duration(i+1) * bucketDur)
+		if i == bucketCount-1 {
+			bEnd = now.Add(time.Minute)
+		}
+		bApps := 0
+		bHires := 0
+		for _, a := range apps {
+			if !a.AppliedAt.Before(bStart) && a.AppliedAt.Before(bEnd) {
+				bApps++
+			}
+			if strings.ToLower(strings.TrimSpace(a.Stage)) == "hired" && !a.UpdatedAt.Before(bStart) && a.UpdatedAt.Before(bEnd) {
+				bHires++
+			}
+		}
+		trend = append(trend, fiber.Map{
+			"label":        bStart.Format("Jan 2"),
+			"applications": bApps,
+			"hires":        bHires,
+		})
+	}
+
+	// Sources breakdown
+	sourcePalette := []string{"#530EF0", "#3B82F6", "#06B6D4", "#10B981", "#F59E0B", "#9CA3AF"}
+	type kv struct {
+		Key   string
+		Count int
+	}
+	srcSlice := make([]kv, 0, len(sourceCounts))
+	for k, v := range sourceCounts {
+		srcSlice = append(srcSlice, kv{Key: k, Count: v})
+	}
+	sort.Slice(srcSlice, func(i, j int) bool { return srcSlice[i].Count > srcSlice[j].Count })
+	sources := make([]fiber.Map, 0, len(srcSlice))
+	for idx, item := range srcSlice {
+		sources = append(sources, fiber.Map{
+			"name":  item.Key,
+			"count": item.Count,
+			"pct":   pctOfTotal(item.Count),
+			"color": sourcePalette[idx%len(sourcePalette)],
+		})
+	}
+
+	// Hires by Department
+	deptPalette := []string{"#530EF0", "#3B82F6", "#EC4899", "#F59E0B", "#10B981", "#06B6D4"}
+	deptKeys := make(map[string]struct{})
+	for k := range deptApps {
+		deptKeys[k] = struct{}{}
+	}
+	deptList := make([]kv, 0, len(deptKeys))
+	for k := range deptKeys {
+		deptList = append(deptList, kv{Key: k, Count: deptHires[k]})
+	}
+	sort.Slice(deptList, func(i, j int) bool {
+		if deptList[i].Count != deptList[j].Count {
+			return deptList[i].Count > deptList[j].Count
+		}
+		return deptApps[deptList[i].Key] > deptApps[deptList[j].Key]
+	})
+	departments := make([]fiber.Map, 0, len(deptList))
+	for idx, d := range deptList {
+		departments = append(departments, fiber.Map{
+			"dept":         d.Key,
+			"hires":        d.Count,
+			"applications": deptApps[d.Key],
+			"color":        deptPalette[idx%len(deptPalette)],
+		})
+	}
+
+	// Top Performing Jobs
+	jobSlice := make([]*jobAgg, 0, len(jobStats))
+	for _, j := range jobStats {
+		jobSlice = append(jobSlice, j)
+	}
+	sort.Slice(jobSlice, func(i, j int) bool {
+		if jobSlice[i].Apps != jobSlice[j].Apps {
+			return jobSlice[i].Apps > jobSlice[j].Apps
+		}
+		return jobSlice[i].Hired > jobSlice[j].Hired
+	})
+	if len(jobSlice) > 5 {
+		jobSlice = jobSlice[:5]
+	}
+	topJobs := make([]fiber.Map, 0, len(jobSlice))
+	for _, j := range jobSlice {
+		avgDays := 0
+		if j.Hired > 0 {
+			avgDays = int(math.Round(j.HireDays / float64(j.Hired)))
+		}
+		topJobs = append(topJobs, fiber.Map{
+			"title":        j.Title,
+			"dept":         j.Department,
+			"applications": j.Apps,
+			"hired":        j.Hired,
+			"avg_time":     fmt.Sprintf("%dd", avgDays),
+		})
+	}
+
+	// Dynamic Insights
+	topSourceName := "N/A"
+	topSourceConv := 0
+	if len(srcSlice) > 0 {
+		topSourceName = srcSlice[0].Key
+		if srcSlice[0].Count > 0 {
+			topSourceConv = int(math.Round((float64(sourceHires[topSourceName]) / float64(srcSlice[0].Count)) * 100))
+		}
+	}
+	topDeptName := "N/A"
+	topDeptHires := 0
+	if len(deptList) > 0 {
+		topDeptName = deptList[0].Key
+		topDeptHires = deptList[0].Count
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Analytics retrieved successfully",
+		Data: fiber.Map{
+			"range": rangeParam,
+			"days":  days,
+			"kpis": fiber.Map{
+				"total_applications":    totalApps,
+				"qualified_candidates":  qualifiedCount,
+				"hires_completed":       hiredCount,
+				"avg_time_to_hire_days": avgTimeToHire,
+				"offer_acceptance_rate": offerAcceptanceRate,
+				"active_internships":    activeInternships,
+			},
+			"conversion_rate": conversionRate,
+			"trend":           trend,
+			"funnel":          funnel,
+			"sources":         sources,
+			"departments":     departments,
+			"top_jobs":        topJobs,
+			"insights": fiber.Map{
+				"avg_time_to_hire_days": avgTimeToHire,
+				"offer_acceptance_rate": offerAcceptanceRate,
+				"top_dept":              topDeptName,
+				"top_dept_hires":        topDeptHires,
+				"top_source":            topSourceName,
+				"top_source_conversion": topSourceConv,
+			},
 		},
 	})
 }

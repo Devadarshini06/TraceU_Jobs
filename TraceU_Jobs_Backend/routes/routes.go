@@ -87,4 +87,6 @@ func SetupRoutes(app *fiber.App) {
 	admin.Put("/internships/:id", controllers.UpdateInternship)
 	admin.Patch("/internships/:id/status", controllers.UpdateInternshipStatus)
 	admin.Delete("/internships/:id", controllers.DeleteInternship)
+
+	admin.Get("/analytics", controllers.GetAnalytics)
 }
