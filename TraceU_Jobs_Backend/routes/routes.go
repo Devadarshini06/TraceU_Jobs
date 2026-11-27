@@ -63,7 +63,10 @@ func SetupRoutes(app *fiber.App) {
 	admin.Delete("/candidates/:id", controllers.DeleteCandidate)
 
 	admin.Get("/applications", controllers.GetApplications)
+	admin.Post("/applications", controllers.CreateApplication)
 	admin.Patch("/applications/:id/stage", controllers.UpdateApplicationStage)
+	admin.Post("/applications/:id/resume", controllers.UploadApplicationResume)
+	admin.Delete("/applications/:id", controllers.DeleteApplication)
 
 	admin.Get("/interviews", controllers.GetInterviews)
 	admin.Post("/interviews", controllers.CreateInterview)

@@ -73,6 +73,7 @@ type Application struct {
 	CandidateID uint      `gorm:"column:candidate_id;not null;index" json:"candidate_id"`
 	JobID       uint      `gorm:"column:job_id;not null;index" json:"job_id"`
 	Stage       string    `gorm:"column:stage;size:30;default:applied;not null" json:"stage"` // applied, screening, shortlisted, interview, selected, offered, hired, rejected
+	MatchScore  int       `gorm:"column:match_score;default:80;not null" json:"match_score"`
 	AppliedAt   time.Time `gorm:"column:applied_at" json:"applied_at"`
 	UpdatedAt   time.Time `gorm:"column:updated_at" json:"updated_at"`
 	Candidate   Candidate `gorm:"foreignKey:CandidateID" json:"candidate,omitempty"`

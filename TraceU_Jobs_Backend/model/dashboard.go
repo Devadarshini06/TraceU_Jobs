@@ -171,6 +171,17 @@ type UpdateApplicationStageRequest struct {
 	Stage string `json:"stage"`
 }
 
+// CreateApplicationRequest creates a new ATS application.
+type CreateApplicationRequest struct {
+	CandidateID    uint   `json:"candidate_id"`
+	CandidateName  string `json:"candidate_name"`
+	CandidateEmail string `json:"candidate_email"`
+	JobID          uint   `json:"job_id"`
+	JobTitle       string `json:"job_title"`
+	Stage          string `json:"stage"`
+	MatchScore     int    `json:"match_score"`
+}
+
 // CreateInterviewRequest schedules a new interview.
 type CreateInterviewRequest struct {
 	ApplicationID uint      `json:"application_id"`

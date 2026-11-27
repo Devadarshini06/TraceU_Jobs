@@ -1059,12 +1059,37 @@ func TriggerCareersSync(c *fiber.Ctx) error {
 	})
 }
 
+func normalizeApplicationStage(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "applied":
+		return "applied", true
+	case "screening":
+		return "screening", true
+	case "shortlisted":
+		return "shortlisted", true
+	case "interview":
+		return "interview", true
+	case "selected":
+		return "selected", true
+	case "offer", "offered":
+		return "offered", true
+	case "hired":
+		return "hired", true
+	case "rejected":
+		return "rejected", true
+	default:
+		return "", false
+	}
+}
+
 // GetApplications lists applications with candidate and job details.
 func GetApplications(c *fiber.Ctx) error {
 	var apps []domain.Application
 	query := database.DB.Preload("Candidate").Preload("Job").Order("applied_at DESC")
-	if stage := c.Query("stage"); stage != "" {
-		query = query.Where("stage = ?", stage)
+	if stage := c.Query("stage"); stage != "" && stage != "ALL" {
+		if normalized, ok := normalizeApplicationStage(stage); ok {
+			query = query.Where("stage = ?", normalized)
+		}
 	}
 	if result := query.Find(&apps); result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
@@ -1080,6 +1105,129 @@ func GetApplications(c *fiber.Ctx) error {
 	})
 }
 
+// CreateApplication creates a new application, linking or creating Candidate and Job if needed.
+func CreateApplication(c *fiber.Ctx) error {
+	var req model.CreateApplicationRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+			Error:   err.Error(),
+		})
+	}
+
+	var cand domain.Candidate
+	if req.CandidateID > 0 {
+		if err := database.DB.First(&cand, req.CandidateID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+				Success: false,
+				Message: "Candidate not found",
+			})
+		}
+	} else {
+		name := strings.TrimSpace(req.CandidateName)
+		email := strings.TrimSpace(strings.ToLower(req.CandidateEmail))
+		if name == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+				Success: false,
+				Message: "Candidate name is required",
+			})
+		}
+		if email == "" {
+			slug := strings.ToLower(strings.ReplaceAll(name, " ", "."))
+			email = fmt.Sprintf("%s.%d@applicant.traceu.in", slug, time.Now().Unix()%100000)
+		}
+		if err := database.DB.Where("LOWER(email) = ?", email).First(&cand).Error; err != nil {
+			cand = domain.Candidate{
+				Name:   name,
+				Email:  email,
+				Source: "Direct Application",
+				Status: "in_process",
+			}
+			if createErr := database.DB.Create(&cand).Error; createErr != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+					Success: false,
+					Message: "Failed to create candidate for application",
+					Error:   createErr.Error(),
+				})
+			}
+		}
+	}
+
+	var job domain.Job
+	if req.JobID > 0 {
+		if err := database.DB.First(&job, req.JobID).Error; err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+				Success: false,
+				Message: "Job not found",
+			})
+		}
+	} else {
+		jobTitle := strings.TrimSpace(req.JobTitle)
+		if jobTitle == "" {
+			jobTitle = "Software Engineer"
+		}
+		if err := database.DB.Where("LOWER(title) = ?", strings.ToLower(jobTitle)).First(&job).Error; err != nil {
+			job = domain.Job{
+				Title:      jobTitle,
+				Department: "Engineering",
+				Location:   "Bengaluru",
+				JobType:    "full_time",
+				Status:     "published",
+				Source:     "TraceU",
+			}
+			if createErr := database.DB.Create(&job).Error; createErr != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+					Success: false,
+					Message: "Failed to resolve job for application",
+					Error:   createErr.Error(),
+				})
+			}
+		}
+	}
+
+	stage := "applied"
+	if req.Stage != "" {
+		if normalized, ok := normalizeApplicationStage(req.Stage); ok {
+			stage = normalized
+		}
+	}
+	matchScore := req.MatchScore
+	if matchScore <= 0 || matchScore > 100 {
+		matchScore = 84
+	}
+
+	app := domain.Application{
+		CandidateID: cand.ID,
+		JobID:       job.ID,
+		Stage:       stage,
+		MatchScore:  matchScore,
+		AppliedAt:   time.Now(),
+	}
+	if result := database.DB.Create(&app); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to create application",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	database.DB.Preload("Candidate").Preload("Job").First(&app, app.ID)
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "New application received",
+		Description: fmt.Sprintf("%s applied for %s", cand.Name, job.Title),
+		EntityType:  "application",
+		EntityID:    app.ID,
+	})
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: "Application created successfully",
+		Data:    app,
+	})
+}
+
 // UpdateApplicationStage moves an application to a new hiring stage.
 func UpdateApplicationStage(c *fiber.Ctx) error {
 	id := c.Params("id")
@@ -1091,6 +1239,14 @@ func UpdateApplicationStage(c *fiber.Ctx) error {
 		})
 	}
 
+	normalized, ok := normalizeApplicationStage(req.Stage)
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid stage",
+		})
+	}
+
 	var app domain.Application
 	if result := database.DB.Preload("Candidate").Preload("Job").First(&app, id); result.Error != nil {
 		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
@@ -1099,7 +1255,7 @@ func UpdateApplicationStage(c *fiber.Ctx) error {
 		})
 	}
 
-	if result := database.DB.Model(&app).Update("stage", req.Stage); result.Error != nil {
+	if result := database.DB.Model(&app).Update("stage", normalized); result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
 			Success: false,
 			Message: "Failed to update application stage",
@@ -1108,16 +1264,113 @@ func UpdateApplicationStage(c *fiber.Ctx) error {
 	}
 
 	database.DB.Create(&domain.ActivityLog{
-		Title:       fmt.Sprintf("Candidate moved to %s", req.Stage),
+		Title:       fmt.Sprintf("Candidate moved to %s", normalized),
 		Description: fmt.Sprintf("by %s (%s)", app.Candidate.Name, app.Job.Title),
 		EntityType:  "application",
 		EntityID:    app.ID,
 	})
 
-	app.Stage = req.Stage
+	app.Stage = normalized
 	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
 		Success: true,
 		Message: "Application stage updated successfully",
+		Data:    app,
+	})
+}
+
+// DeleteApplication removes an application and its scheduled interviews.
+func DeleteApplication(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid application ID",
+		})
+	}
+
+	var app domain.Application
+	if result := database.DB.First(&app, id); result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Application not found",
+		})
+	}
+
+	database.DB.Where("application_id = ?", app.ID).Delete(&domain.Interview{})
+	if result := database.DB.Delete(&app); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to delete application",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Application deleted successfully",
+	})
+}
+
+// UploadApplicationResume uploads a resume file for an application's candidate.
+func UploadApplicationResume(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid application ID",
+		})
+	}
+
+	var app domain.Application
+	if result := database.DB.Preload("Candidate").Preload("Job").First(&app, id); result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Application not found",
+		})
+	}
+
+	file, err := c.FormFile("resume")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Resume file is required (field name: resume)",
+		})
+	}
+
+	uploadDir := filepath.Join("uploads", "resumes")
+	if mkErr := os.MkdirAll(uploadDir, 0755); mkErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to prepare upload directory",
+		})
+	}
+
+	safeName := fmt.Sprintf("app_%d_%d_%s", app.ID, time.Now().Unix(), filepath.Base(file.Filename))
+	destPath := filepath.Join(uploadDir, safeName)
+	if saveErr := c.SaveFile(file, destPath); saveErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to save resume file",
+			Error:   saveErr.Error(),
+		})
+	}
+
+	sizeStr := fmt.Sprintf("%.1f KB", float64(file.Size)/1024.0)
+	if file.Size >= 1024*1024 {
+		sizeStr = fmt.Sprintf("%.2f MB", float64(file.Size)/(1024.0*1024.0))
+	}
+
+	database.DB.Model(&domain.Candidate{}).Where("id = ?", app.CandidateID).Updates(map[string]interface{}{
+		"resume_name": filepath.Base(file.Filename),
+		"resume_size": sizeStr,
+		"resume_url":  "/" + filepath.ToSlash(destPath),
+	})
+
+	database.DB.Preload("Candidate").Preload("Job").First(&app, app.ID)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Resume uploaded successfully",
 		Data:    app,
 	})
 }

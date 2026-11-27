@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 // material-ui
@@ -33,6 +33,20 @@ import Checkbox from '@mui/material/Checkbox';
 import Tooltip from '@mui/material/Tooltip';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
+import CircularProgress from '@mui/material/CircularProgress';
+import Divider from '@mui/material/Divider';
+import Popover from '@mui/material/Popover';
+
+// project imports
+import {
+  getApplications,
+  createApplication,
+  updateApplicationStage,
+  uploadApplicationResume,
+  deleteApplication,
+  scheduleInterview
+} from 'api/adminApplications';
+import { getJobs } from 'api/adminJobs';
 
 // icons
 import SolutionOutlined from '@ant-design/icons/SolutionOutlined';
@@ -249,11 +263,89 @@ const initialApplications = [
   }
 ];
 
+const APP_STAGE_LABELS = {
+  applied: 'Applied',
+  screening: 'Screening',
+  shortlisted: 'Shortlisted',
+  interview: 'Interview',
+  selected: 'Offer',
+  offered: 'Offer',
+  hired: 'Offer',
+  rejected: 'Rejected'
+};
+
+const APP_AVATARS = [avatar1, avatar2, avatar3, avatar4, avatar5];
+
+function mapBackendApplication(item) {
+  const cand = item?.candidate || {};
+  const job = item?.job || {};
+  const rawStage = String(item?.stage || 'applied').toLowerCase();
+  const skillsList = String(cand?.skills || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const appliedOn = item?.applied_at
+    ? new Date(item.applied_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : 'Just now';
+
+  return {
+    dbId: item?.id,
+    id: `APP-${String(item?.id || 1).padStart(3, '0')}`,
+    candidateId: item?.candidate_id || cand?.id,
+    name: cand?.name || 'Applicant',
+    email: cand?.email || '',
+    phone: cand?.phone || '—',
+    avatar: cand?.photo_url || APP_AVATARS[(Number(item?.id) || 0) % APP_AVATARS.length],
+    role: job?.title || cand?.current_role || 'Software Engineer',
+    dept: job?.department || cand?.department || 'Engineering',
+    jobCode: `JOB-${String(job?.id || item?.job_id || 1).padStart(4, '0')}`,
+    resumeName: cand?.resume_name || '',
+    resumeSize: cand?.resume_size || '',
+    resumeUrl: cand?.resume_url || '',
+    matchScore: Number(item?.match_score || 80),
+    stage: APP_STAGE_LABELS[rawStage] || 'Applied',
+    appliedAt: item?.applied_at,
+    appliedOn,
+    location: cand?.location || job?.location || 'Bengaluru',
+    exp: cand?.experience || '2+ years',
+    matchedSkills: skillsList.length ? skillsList : ['Communication', 'Problem Solving'],
+    missingSkills: []
+  };
+}
+
 export default function AdminApplications() {
   const navigate = useNavigate();
 
   // state
-  const [applications, setApplications] = useState(initialApplications);
+  const [applications, setApplications] = useState([]);
+  const [availableJobs, setAvailableJobs] = useState([]);
+  const [loadingApps, setLoadingApps] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  // upload resume modal
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [uploadTargetAppId, setUploadTargetAppId] = useState('');
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploadingResume, setUploadingResume] = useState(false);
+
+  // schedule interview modal
+  const [interviewDialogOpen, setInterviewDialogOpen] = useState(false);
+  const [interviewTargetApp, setInterviewTargetApp] = useState(null);
+  const [interviewDate, setInterviewDate] = useState('');
+  const [interviewerName, setInterviewerName] = useState('Admin');
+  const [interviewNotes, setInterviewNotes] = useState('');
+  const [schedulingInterview, setSchedulingInterview] = useState(false);
+
+  // delete confirmation
+  const [deleteConfirmApp, setDeleteConfirmApp] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // sort & more filters
+  const [sortBy, setSortBy] = useState('recent');
+  const [sortAnchor, setSortAnchor] = useState(null);
+  const [minScoreFilter, setMinScoreFilter] = useState(0);
+  const [moreFiltersAnchor, setMoreFiltersAnchor] = useState(null);
+
   const [selectedApp, setSelectedApp] = useState(null);
   const [stageTab, setStageTab] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -276,27 +368,70 @@ export default function AdminApplications() {
   const [newEmail, setNewEmail] = useState('');
   const [appErrors, setAppErrors] = useState({});
 
-  // counts
-  const totalCount = 486;
-  const appliedCount = 100;
-  const screeningCount = 72;
-  const shortlistedCount = 45;
-  const interviewCount = 29;
-  const offerCount = 12;
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingApps(true);
+    Promise.all([getApplications(), getJobs().catch(() => null)])
+      .then(([appsRes, jobsRes]) => {
+        if (cancelled) return;
+        const appList = Array.isArray(appsRes?.data) ? appsRes.data : [];
+        setApplications(appList.map(mapBackendApplication));
+        if (Array.isArray(jobsRes?.data)) {
+          setAvailableJobs(jobsRes.data);
+          if (jobsRes.data.length > 0) {
+            setNewJobTitle(jobsRes.data[0].title);
+          }
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSnackbar({
+          open: true,
+          message: err.message || 'Failed to load applications from server',
+          severity: 'error'
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingApps(false);
+      });
 
-  // filter
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // counts
+  const totalCount = applications.length;
+  const appliedCount = applications.filter((a) => a.stage === 'Applied').length;
+  const screeningCount = applications.filter((a) => a.stage === 'Screening').length;
+  const shortlistedCount = applications.filter((a) => a.stage === 'Shortlisted').length;
+  const interviewCount = applications.filter((a) => a.stage === 'Interview').length;
+  const offerCount = applications.filter((a) => a.stage === 'Offer').length;
+
+  // filter & sort
   const filteredApps = useMemo(() => {
-    return applications.filter((app) => {
+    const filtered = applications.filter((app) => {
       const matchTab = stageTab === 'ALL' || app.stage.toLowerCase() === stageTab.toLowerCase();
+      const q = searchQuery.toLowerCase();
       const matchSearch =
-        app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        app.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        app.jobCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        app.email.toLowerCase().includes(searchQuery.toLowerCase());
+        !q ||
+        app.name.toLowerCase().includes(q) ||
+        app.role.toLowerCase().includes(q) ||
+        app.jobCode.toLowerCase().includes(q) ||
+        app.email.toLowerCase().includes(q);
+      const matchJob = jobFilter === 'ALL' || app.role === jobFilter;
+      const matchDept = deptFilter === 'ALL' || (app.dept || '').toLowerCase().includes(deptFilter.toLowerCase());
       const matchStatus = statusFilter === 'ALL' || app.stage === statusFilter;
-      return matchTab && matchSearch && matchStatus;
+      const matchScore = app.matchScore >= minScoreFilter;
+      return matchTab && matchSearch && matchJob && matchDept && matchStatus && matchScore;
     });
-  }, [applications, stageTab, searchQuery, statusFilter]);
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'score') return b.matchScore - a.matchScore;
+      if (sortBy === 'oldest') return new Date(a.appliedAt || 0) - new Date(b.appliedAt || 0);
+      return new Date(b.appliedAt || 0) - new Date(a.appliedAt || 0);
+    });
+  }, [applications, stageTab, searchQuery, jobFilter, deptFilter, statusFilter, minScoreFilter, sortBy]);
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
@@ -335,13 +470,13 @@ export default function AdminApplications() {
     }
   };
 
-  const handleAddSubmit = () => {
+  const handleAddSubmit = async () => {
     const errors = {};
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!newCandidateName.trim()) {
       errors.name = 'Candidate Name is required';
-    } else if (newCandidateName.trim().length < 5) {
-      errors.name = 'Candidate Name must be at least 5 characters';
+    } else if (newCandidateName.trim().length < 2) {
+      errors.name = 'Candidate Name must be at least 2 characters';
     }
 
     if (newEmail.trim() && !emailRegex.test(newEmail.trim())) {
@@ -353,31 +488,105 @@ export default function AdminApplications() {
       setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'warning' });
       return;
     }
-    const created = {
-      id: `APP-${applications.length + 111}`,
-      name: newCandidateName.trim(),
-      email: newEmail.trim() || 'candidate@email.com',
-      phone: '+91 98765 00000',
-      avatar: avatar1,
-      role: newJobTitle,
-      jobCode: 'JOB-0012',
-      resumeName: 'Candidate_CV.pdf',
-      resumeSize: '1.6 MB',
-      matchScore: 84,
-      stage: 'Applied',
-      appliedOn: 'Just now',
-      location: 'Bengaluru, India',
-      exp: '2+ years',
-      matchedSkills: ['React.js', 'JavaScript', 'Problem Solving'],
-      missingSkills: [{ name: 'Cloud Deployments', type: 'Partial' }]
-    };
-    setApplications([created, ...applications]);
-    setSelectedApp(created);
-    setAddDialogOpen(false);
-    setNewCandidateName('');
-    setNewEmail('');
-    setAppErrors({});
-    setSnackbar({ open: true, message: `Application created for ${created.name}!`, severity: 'success' });
+
+    setSubmitting(true);
+    try {
+      const res = await createApplication({
+        candidateName: newCandidateName.trim(),
+        candidateEmail: newEmail.trim(),
+        jobTitle: newJobTitle
+      });
+      const created = mapBackendApplication(res.data);
+      setApplications((prev) => [created, ...prev]);
+      setSelectedApp(created);
+      setAddDialogOpen(false);
+      setNewCandidateName('');
+      setNewEmail('');
+      setAppErrors({});
+      setSnackbar({ open: true, message: `Application created for ${created.name}!`, severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to create application', severity: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStageUpdate = async (app, nextStage, successMessage, severity = 'success') => {
+    if (!app?.dbId) return;
+    try {
+      const res = await updateApplicationStage(app.dbId, nextStage);
+      const updated = mapBackendApplication(res.data);
+      setApplications((prev) => prev.map((a) => (a.dbId === app.dbId ? updated : a)));
+      if (selectedApp?.dbId === app.dbId) setSelectedApp(updated);
+      setSnackbar({ open: true, message: successMessage, severity });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to update application stage', severity: 'error' });
+    }
+  };
+
+  const handleUploadResumeSubmit = async () => {
+    if (!uploadTargetAppId || !uploadFile) {
+      setSnackbar({ open: true, message: 'Please select an application and attach a resume file.', severity: 'warning' });
+      return;
+    }
+    setUploadingResume(true);
+    try {
+      const res = await uploadApplicationResume(uploadTargetAppId, uploadFile);
+      const updated = mapBackendApplication(res.data);
+      setApplications((prev) => prev.map((a) => (a.dbId === updated.dbId ? updated : a)));
+      if (selectedApp?.dbId === updated.dbId) setSelectedApp(updated);
+      setUploadDialogOpen(false);
+      setUploadFile(null);
+      setSnackbar({ open: true, message: `Resume uploaded for ${updated.name}!`, severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to upload resume', severity: 'error' });
+    } finally {
+      setUploadingResume(false);
+    }
+  };
+
+  const handleScheduleInterviewSubmit = async () => {
+    if (!interviewTargetApp?.dbId || !interviewDate) {
+      setSnackbar({ open: true, message: 'Please select an interview date and time.', severity: 'warning' });
+      return;
+    }
+    setSchedulingInterview(true);
+    try {
+      await scheduleInterview({
+        applicationId: interviewTargetApp.dbId,
+        scheduledAt: new Date(interviewDate).toISOString(),
+        interviewer: interviewerName.trim() || 'Admin',
+        notes: interviewNotes.trim()
+      });
+      await handleStageUpdate(
+        interviewTargetApp,
+        'interview',
+        `Interview scheduled for ${interviewTargetApp.name}!`,
+        'success'
+      );
+      setInterviewDialogOpen(false);
+      setInterviewNotes('');
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to schedule interview', severity: 'error' });
+    } finally {
+      setSchedulingInterview(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirmApp?.dbId) return;
+    setDeleting(true);
+    try {
+      await deleteApplication(deleteConfirmApp.dbId);
+      setApplications((prev) => prev.filter((a) => a.dbId !== deleteConfirmApp.dbId));
+      if (selectedApp?.dbId === deleteConfirmApp.dbId) setSelectedApp(null);
+      setSnackbar({ open: true, message: `Application ${deleteConfirmApp.id} deleted.`, severity: 'info' });
+      setDeleteConfirmApp(null);
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to delete application', severity: 'error' });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const getStageChip = (stage) => {
@@ -506,7 +715,11 @@ export default function AdminApplications() {
             <Button
               variant="outlined"
               startIcon={<UploadOutlined />}
-              onClick={() => setSnackbar({ open: true, message: 'Resume parser ready!', severity: 'info' })}
+              onClick={() => {
+                setUploadTargetAppId(selectedApp?.dbId || applications[0]?.dbId || '');
+                setUploadFile(null);
+                setUploadDialogOpen(true);
+              }}
               sx={{
                 color: '#334155',
                 borderColor: '#E2E8F0',
@@ -751,16 +964,19 @@ export default function AdminApplications() {
                   '& .MuiTabs-indicator': { backgroundColor: '#6929e2', height: 3, borderRadius: '3px 3px 0 0' }
                 }}
               >
-                <Tab value="ALL" label="All (486)" />
-                <Tab value="Applied" label="Applied (100)" />
-                <Tab value="Screening" label="Screening (72)" />
-                <Tab value="Shortlisted" label="Shortlisted (45)" />
-                <Tab value="Interview" label="Interview (29)" />
-                <Tab value="Offer" label="Offer (12)" />
+                <Tab value="ALL" label={`All (${totalCount})`} />
+                <Tab value="Applied" label={`Applied (${appliedCount})`} />
+                <Tab value="Screening" label={`Screening (${screeningCount})`} />
+                <Tab value="Shortlisted" label={`Shortlisted (${shortlistedCount})`} />
+                <Tab value="Interview" label={`Interview (${interviewCount})`} />
+                <Tab value="Offer" label={`Offer (${offerCount})`} />
               </Tabs>
 
-              <Typography sx={{ fontSize: 12, color: '#6b7280', fontWeight: 600 }}>
-                Sort by: <strong style={{ color: '#111827' }}>Recent ⌵</strong>
+              <Typography
+                onClick={(e) => setSortAnchor(e.currentTarget)}
+                sx={{ fontSize: 12, color: '#6b7280', fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}
+              >
+                Sort by: <strong style={{ color: '#111827' }}>{sortBy === 'score' ? 'Match Score' : sortBy === 'oldest' ? 'Oldest' : 'Recent'} ⌵</strong>
               </Typography>
             </Box>
 
@@ -815,7 +1031,7 @@ export default function AdminApplications() {
                     size="small"
                     variant="outlined"
                     startIcon={<FilterOutlined />}
-                    onClick={() => setSnackbar({ open: true, message: 'Filter criteria updated', severity: 'info' })}
+                    onClick={(e) => setMoreFiltersAnchor(e.currentTarget)}
                     sx={{
                       borderRadius: '10px',
                       textTransform: 'none',
@@ -864,9 +1080,18 @@ export default function AdminApplications() {
                   <Button
                     size="small"
                     variant="outlined"
-                    onClick={() => {
-                      setApplications(applications.map((a) => (selectedRows.includes(a.id) ? { ...a, stage: 'Shortlisted' } : a)));
-                      setSnackbar({ open: true, message: `Shortlisted ${selectedRows.length} applications!`, severity: 'success' });
+                    onClick={async () => {
+                      const targets = applications.filter((a) => selectedRows.includes(a.id));
+                      try {
+                        const results = await Promise.all(
+                          targets.map((a) => updateApplicationStage(a.dbId, 'shortlisted').then((r) => mapBackendApplication(r.data)))
+                        );
+                        const byId = new Map(results.map((r) => [r.dbId, r]));
+                        setApplications((prev) => prev.map((a) => byId.get(a.dbId) || a));
+                        setSnackbar({ open: true, message: `Shortlisted ${targets.length} applications!`, severity: 'success' });
+                      } catch (err) {
+                        setSnackbar({ open: true, message: err.message || 'Failed to shortlist applications', severity: 'error' });
+                      }
                     }}
                     sx={{ textTransform: 'none', fontWeight: 700, fontSize: 12, borderRadius: '6px', height: 30, color: '#059669', borderColor: '#A7F3D0' }}
                   >
@@ -875,9 +1100,18 @@ export default function AdminApplications() {
                   <Button
                     size="small"
                     variant="outlined"
-                    onClick={() => {
-                      setApplications(applications.map((a) => (selectedRows.includes(a.id) ? { ...a, stage: 'Interview' } : a)));
-                      setSnackbar({ open: true, message: `Moved ${selectedRows.length} candidates to Interview stage!`, severity: 'info' });
+                    onClick={async () => {
+                      const targets = applications.filter((a) => selectedRows.includes(a.id));
+                      try {
+                        const results = await Promise.all(
+                          targets.map((a) => updateApplicationStage(a.dbId, 'interview').then((r) => mapBackendApplication(r.data)))
+                        );
+                        const byId = new Map(results.map((r) => [r.dbId, r]));
+                        setApplications((prev) => prev.map((a) => byId.get(a.dbId) || a));
+                        setSnackbar({ open: true, message: `Moved ${targets.length} candidates to Interview stage!`, severity: 'info' });
+                      } catch (err) {
+                        setSnackbar({ open: true, message: err.message || 'Failed to update stage', severity: 'error' });
+                      }
                     }}
                     sx={{ textTransform: 'none', fontWeight: 700, fontSize: 12, borderRadius: '6px', height: 30, color: '#530EF0', borderColor: '#C084FC' }}
                   >
@@ -903,9 +1137,18 @@ export default function AdminApplications() {
                     size="small"
                     color="error"
                     variant="outlined"
-                    onClick={() => {
-                      setApplications(applications.map((a) => (selectedRows.includes(a.id) ? { ...a, stage: 'Rejected' } : a)));
-                      setSnackbar({ open: true, message: `Rejected ${selectedRows.length} applications.`, severity: 'error' });
+                    onClick={async () => {
+                      const targets = applications.filter((a) => selectedRows.includes(a.id));
+                      try {
+                        const results = await Promise.all(
+                          targets.map((a) => updateApplicationStage(a.dbId, 'rejected').then((r) => mapBackendApplication(r.data)))
+                        );
+                        const byId = new Map(results.map((r) => [r.dbId, r]));
+                        setApplications((prev) => prev.map((a) => byId.get(a.dbId) || a));
+                        setSnackbar({ open: true, message: `Rejected ${targets.length} applications.`, severity: 'error' });
+                      } catch (err) {
+                        setSnackbar({ open: true, message: err.message || 'Failed to reject applications', severity: 'error' });
+                      }
                     }}
                     sx={{ textTransform: 'none', fontWeight: 700, fontSize: 12, borderRadius: '6px', height: 30 }}
                   >
@@ -1232,10 +1475,136 @@ export default function AdminApplications() {
       {/* Row Menu (•••) */}
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
         <MenuItem onClick={() => { setMenuAnchor(null); if (menuTarget) setSelectedApp(menuTarget); }}>View Application</MenuItem>
-        <MenuItem onClick={() => { setMenuAnchor(null); setSnackbar({ open: true, message: 'Moving to Shortlisted stage...', severity: 'success' }); }}>Move to Shortlisted</MenuItem>
-        <MenuItem onClick={() => { setMenuAnchor(null); setSnackbar({ open: true, message: 'Interview scheduled!', severity: 'info' }); }}>Schedule Interview</MenuItem>
-        <MenuItem onClick={() => { setMenuAnchor(null); setSnackbar({ open: true, message: 'Application rejected', severity: 'error' }); }} sx={{ color: '#dc2626' }}>Reject</MenuItem>
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) handleStageUpdate(t, 'shortlisted', `${t.name} moved to Shortlisted!`, 'success');
+          }}
+          sx={{ color: '#059669' }}
+        >
+          Move to Shortlisted
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) {
+              setInterviewTargetApp(t);
+              setInterviewDate('');
+              setInterviewNotes('');
+              setInterviewDialogOpen(true);
+            }
+          }}
+          sx={{ color: '#6929e2' }}
+        >
+          Schedule Interview
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) handleStageUpdate(t, 'offered', `Offer sent to ${t.name}!`, 'success');
+          }}
+        >
+          Send Offer
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) {
+              setUploadTargetAppId(t.dbId);
+              setUploadFile(null);
+              setUploadDialogOpen(true);
+            }
+          }}
+        >
+          Upload Resume
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) handleStageUpdate(t, 'rejected', `Application for ${t.name} rejected.`, 'error');
+          }}
+          sx={{ color: '#d97706' }}
+        >
+          Reject
+        </MenuItem>
+        <Divider sx={{ my: 0.5 }} />
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) setDeleteConfirmApp(t);
+          }}
+          sx={{ color: '#dc2626', fontWeight: 600 }}
+        >
+          Delete Application
+        </MenuItem>
       </Menu>
+
+      {/* Sort Menu */}
+      <Menu anchorEl={sortAnchor} open={Boolean(sortAnchor)} onClose={() => setSortAnchor(null)}>
+        <MenuItem selected={sortBy === 'recent'} onClick={() => { setSortBy('recent'); setSortAnchor(null); }}>Recent</MenuItem>
+        <MenuItem selected={sortBy === 'oldest'} onClick={() => { setSortBy('oldest'); setSortAnchor(null); }}>Oldest</MenuItem>
+        <MenuItem selected={sortBy === 'score'} onClick={() => { setSortBy('score'); setSortAnchor(null); }}>Match Score</MenuItem>
+      </Menu>
+
+      {/* More Filters Popover */}
+      <Popover
+        open={Boolean(moreFiltersAnchor)}
+        anchorEl={moreFiltersAnchor}
+        onClose={() => setMoreFiltersAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Box sx={{ p: 2.5, width: 260 }}>
+          <Typography sx={{ fontWeight: 800, fontSize: 14, color: '#111827', mb: 1.5 }}>
+            More Filters
+          </Typography>
+          <Stack spacing={2}>
+            <TextField
+              fullWidth
+              size="small"
+              select
+              label="Minimum Match Score"
+              value={minScoreFilter}
+              onChange={(e) => setMinScoreFilter(Number(e.target.value))}
+            >
+              <MenuItem value={0}>Any Score</MenuItem>
+              <MenuItem value={60}>60%+</MenuItem>
+              <MenuItem value={75}>75%+</MenuItem>
+              <MenuItem value={85}>85%+</MenuItem>
+            </TextField>
+            <Stack direction="row" spacing={1} justifyContent="flex-end">
+              <Button
+                size="small"
+                onClick={() => {
+                  setJobFilter('ALL');
+                  setDeptFilter('ALL');
+                  setStatusFilter('ALL');
+                  setMinScoreFilter(0);
+                  setSearchQuery('');
+                  setMoreFiltersAnchor(null);
+                }}
+                sx={{ textTransform: 'none', color: '#6b7280' }}
+              >
+                Reset All
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={() => setMoreFiltersAnchor(null)}
+                sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 700 }}
+              >
+                Apply
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
+      </Popover>
 
       {/* Add Application Dialog */}
       <Dialog
@@ -1278,11 +1647,14 @@ export default function AdminApplications() {
               helperText={appErrors.email}
             />
             <TextField fullWidth select label="Applied Job Title" value={newJobTitle} onChange={(e) => setNewJobTitle(e.target.value)}>
-              <MenuItem value="Software Engineer">Software Engineer</MenuItem>
-              <MenuItem value="Frontend Developer">Frontend Developer</MenuItem>
-              <MenuItem value="Data Analyst">Data Analyst</MenuItem>
-              <MenuItem value="Backend Developer">Backend Developer</MenuItem>
-              <MenuItem value="DevOps Engineer">DevOps Engineer</MenuItem>
+              {(availableJobs.length > 0
+                ? availableJobs.map((j) => j.title)
+                : ['Software Engineer', 'Frontend Developer', 'Data Analyst', 'Backend Developer', 'DevOps Engineer']
+              ).map((title) => (
+                <MenuItem key={title} value={title}>
+                  {title}
+                </MenuItem>
+              ))}
             </TextField>
           </Stack>
         </DialogContent>
@@ -1292,12 +1664,149 @@ export default function AdminApplications() {
               setAddDialogOpen(false);
               setAppErrors({});
             }}
+            disabled={submitting}
             sx={{ textTransform: 'none' }}
           >
             Cancel
           </Button>
-          <Button variant="contained" onClick={handleAddSubmit} sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 700, borderRadius: '8px', px: 3, '&:hover': { bgcolor: '#5b1fd9' } }}>
-            Submit Application
+          <Button
+            variant="contained"
+            onClick={handleAddSubmit}
+            disabled={submitting}
+            startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
+            sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 700, borderRadius: '8px', px: 3, '&:hover': { bgcolor: '#5b1fd9' } }}
+          >
+            {submitting ? 'Submitting...' : 'Submit Application'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Upload Resume Dialog */}
+      <Dialog
+        open={uploadDialogOpen}
+        onClose={() => !uploadingResume && setUploadDialogOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: '16px', p: 1 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800, fontSize: 18, color: '#111827' }}>Upload Application Resume</DialogTitle>
+        <DialogContent dividers sx={{ p: 2.5 }}>
+          <Stack spacing={2}>
+            <TextField
+              fullWidth
+              select
+              label="Select Application"
+              value={uploadTargetAppId}
+              onChange={(e) => setUploadTargetAppId(e.target.value)}
+            >
+              {applications.map((a) => (
+                <MenuItem key={a.dbId} value={a.dbId}>
+                  {a.name} — {a.role}
+                </MenuItem>
+              ))}
+            </TextField>
+            <Button variant="outlined" component="label" startIcon={<UploadOutlined />} sx={{ textTransform: 'none', borderRadius: '8px', py: 1.25 }}>
+              {uploadFile ? uploadFile.name : 'Choose PDF / DOCX File'}
+              <input
+                type="file"
+                hidden
+                accept=".pdf,.doc,.docx"
+                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+              />
+            </Button>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setUploadDialogOpen(false)} disabled={uploadingResume} sx={{ textTransform: 'none' }}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleUploadResumeSubmit}
+            disabled={uploadingResume || !uploadTargetAppId || !uploadFile}
+            startIcon={uploadingResume ? <CircularProgress size={16} color="inherit" /> : null}
+            sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+          >
+            {uploadingResume ? 'Uploading...' : 'Upload'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Schedule Interview Dialog */}
+      <Dialog
+        open={interviewDialogOpen}
+        onClose={() => !schedulingInterview && setInterviewDialogOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: '16px', p: 1 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800, fontSize: 18, color: '#111827' }}>
+          Schedule Interview — {interviewTargetApp?.name}
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: 2.5 }}>
+          <Stack spacing={2}>
+            <TextField
+              fullWidth
+              type="datetime-local"
+              label="Interview Date & Time *"
+              InputLabelProps={{ shrink: true }}
+              value={interviewDate}
+              onChange={(e) => setInterviewDate(e.target.value)}
+            />
+            <TextField
+              fullWidth
+              label="Interviewer"
+              value={interviewerName}
+              onChange={(e) => setInterviewerName(e.target.value)}
+            />
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Notes"
+              placeholder="Meeting link, round focus, etc."
+              value={interviewNotes}
+              onChange={(e) => setInterviewNotes(e.target.value)}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setInterviewDialogOpen(false)} disabled={schedulingInterview} sx={{ textTransform: 'none' }}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleScheduleInterviewSubmit}
+            disabled={schedulingInterview || !interviewDate}
+            startIcon={schedulingInterview ? <CircularProgress size={16} color="inherit" /> : null}
+            sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+          >
+            {schedulingInterview ? 'Scheduling...' : 'Schedule'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Application Confirmation Dialog */}
+      <Dialog
+        open={Boolean(deleteConfirmApp)}
+        onClose={() => !deleting && setDeleteConfirmApp(null)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: '16px', p: 1 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800, fontSize: 17, color: '#111827' }}>Delete Application?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography sx={{ fontSize: 13.5, color: '#4b5563' }}>
+            Are you sure you want to delete <strong>{deleteConfirmApp?.id}</strong> ({deleteConfirmApp?.name})?
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setDeleteConfirmApp(null)} disabled={deleting} sx={{ textTransform: 'none', color: '#6b7280' }}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleDeleteConfirm}
+            disabled={deleting}
+            startIcon={deleting ? <CircularProgress size={16} color="inherit" /> : null}
+            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+          >
+            {deleting ? 'Deleting...' : 'Delete'}
           </Button>
         </DialogActions>
       </Dialog>
