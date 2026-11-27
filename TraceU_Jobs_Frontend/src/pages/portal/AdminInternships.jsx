@@ -1486,8 +1486,11 @@ export default function AdminInternships() {
         </MenuItem>
         <MenuItem
           onClick={() => {
+            const target = menuItem;
             handleCloseMenu();
-            navigate('/admin/applications');
+            if (target?.id) {
+              navigate(`/admin/internships/${target.id}/applications`);
+            }
           }}
         >
           View Applications ({menuItem?.applications ?? 0})

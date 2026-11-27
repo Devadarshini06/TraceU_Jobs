@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -319,6 +319,8 @@ function mapBackendApplication(item) {
 
 export default function AdminApplications() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialJobParam = searchParams.get('job') || 'ALL';
 
   // state
   const [applications, setApplications] = useState([]);
@@ -356,7 +358,15 @@ export default function AdminApplications() {
   const [selectedApp, setSelectedApp] = useState(null);
   const [stageTab, setStageTab] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [jobFilter, setJobFilter] = useState('ALL');
+  const [jobFilter, setJobFilter] = useState(initialJobParam);
+
+  useEffect(() => {
+    const paramJob = searchParams.get('job');
+    if (paramJob) {
+      setJobFilter(paramJob);
+      setPage(1);
+    }
+  }, [searchParams]);
   const [deptFilter, setDeptFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [selectedRows, setSelectedRows] = useState([]);
@@ -1040,9 +1050,17 @@ export default function AdminApplications() {
                 <Grid size={{ xs: 6, sm: 3, md: 2 }}>
                   <Select fullWidth size="small" value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} sx={{ borderRadius: '10px', fontSize: 12, fontWeight: 600 }}>
                     <MenuItem value="ALL">All Jobs</MenuItem>
-                    <MenuItem value="Software Engineer">Software Engineer</MenuItem>
-                    <MenuItem value="Frontend Developer">Frontend Developer</MenuItem>
-                    <MenuItem value="Data Analyst">Data Analyst</MenuItem>
+                    {Array.from(
+                      new Set([
+                        ...(availableJobs || []).map((j) => j.title).filter(Boolean),
+                        ...(applications || []).map((a) => a.role).filter(Boolean),
+                        ...(jobFilter !== 'ALL' ? [jobFilter] : [])
+                      ])
+                    ).map((title) => (
+                      <MenuItem key={title} value={title}>
+                        {title}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </Grid>
                 <Grid size={{ xs: 6, sm: 3, md: 2 }}>

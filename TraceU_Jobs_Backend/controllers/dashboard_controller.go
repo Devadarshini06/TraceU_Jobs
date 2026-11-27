@@ -3036,3 +3036,51 @@ func InviteInternshipCompany(c *fiber.Ctx) error {
 	})
 }
 
+// GetInternshipApplications returns all applications and candidate profiles for a specific internship.
+func GetInternshipApplications(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid internship ID",
+		})
+	}
+
+	var job domain.Job
+	if result := database.DB.Where("id = ? AND job_type = ?", id, "internship").First(&job); result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Internship not found",
+		})
+	}
+
+	var apps []domain.Application
+	if result := database.DB.Preload("Candidate").Preload("Job").
+		Where("job_id = ?", job.ID).Order("applied_at DESC").Find(&apps); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to fetch internship applications",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Internship applications retrieved successfully",
+		Data: fiber.Map{
+			"internship": fiber.Map{
+				"id":        job.ID,
+				"title":     job.Title,
+				"company":   job.Company,
+				"location":  job.Location,
+				"work_mode": job.WorkMode,
+				"duration":  job.Duration,
+				"stipend":   job.Stipend,
+				"skills":    job.Skills,
+				"status":    internshipStatusLabel(job.Status),
+			},
+			"applications": apps,
+		},
+	})
+}
+

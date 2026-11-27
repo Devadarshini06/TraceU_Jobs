@@ -31,6 +31,7 @@ const AdminCandidates = Loadable(lazy(() => import('pages/portal/AdminCandidates
 const AdminApplications = Loadable(lazy(() => import('pages/portal/AdminApplications')));
 const AdminTalentPool = Loadable(lazy(() => import('pages/portal/AdminTalentPool')));
 const AdminInternships = Loadable(lazy(() => import('pages/portal/AdminInternships')));
+const AdminInternshipApplications = Loadable(lazy(() => import('pages/portal/AdminInternshipApplications')));
 const AdminAiStudio = Loadable(lazy(() => import('pages/portal/AdminAiStudio')));
 const AdminAnalytics = Loadable(lazy(() => import('pages/portal/AdminAnalytics')));
 const AdminSettings = Loadable(lazy(() => import('pages/portal/AdminSettings')));
@@ -128,6 +129,14 @@ const MainRoutes = {
       element: (
         <AdminGuard>
           <AdminInternships />
+        </AdminGuard>
+      )
+    },
+    {
+      path: 'admin/internships/:id/applications',
+      element: (
+        <AdminGuard>
+          <AdminInternshipApplications />
         </AdminGuard>
       )
     },

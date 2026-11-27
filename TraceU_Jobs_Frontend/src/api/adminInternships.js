@@ -76,3 +76,7 @@ export async function inviteInternshipCompany(payload) {
   });
 }
 
+export async function getInternshipApplications(id) {
+  return request(`/${id}/applications`, { method: 'GET' });
+}
+
