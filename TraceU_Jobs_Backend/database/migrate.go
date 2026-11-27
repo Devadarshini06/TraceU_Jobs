@@ -26,6 +26,8 @@ func AutoMigrateAndSeed() {
 		&domain.ActivityLog{},
 		&domain.CareersSyncConfig{},
 		&domain.CompanyPartner{},
+		&domain.WorkspaceSetting{},
+		&domain.WorkspaceMember{},
 	)
 	if err != nil {
 		log.Printf("⚠️ AutoMigrate failed: %v", err)

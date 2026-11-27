@@ -158,3 +158,29 @@ func (CompanyPartner) TableName() string {
 	return "company_partners"
 }
 
+// WorkspaceSetting stores JSON-serialized configuration per settings section (org, branding, workflow, templates, integrations, security).
+type WorkspaceSetting struct {
+	ID         uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	SettingKey string    `gorm:"column:setting_key;size:60;unique;not null" json:"setting_key"`
+	Payload    string    `gorm:"column:payload;type:longtext;not null" json:"payload"`
+	UpdatedAt  time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (WorkspaceSetting) TableName() string {
+	return "workspace_settings"
+}
+
+// WorkspaceMember represents a team member with portal access & role.
+type WorkspaceMember struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name      string    `gorm:"column:name;size:120;not null" json:"name"`
+	Email     string    `gorm:"column:email;size:150;unique;not null" json:"email"`
+	Role      string    `gorm:"column:role;size:60;default:Recruiter;not null" json:"role"`
+	Status    string    `gorm:"column:status;size:30;default:Active;not null" json:"status"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+}
+
+func (WorkspaceMember) TableName() string {
+	return "workspace_members"
+}
+

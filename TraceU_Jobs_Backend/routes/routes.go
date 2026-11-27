@@ -89,4 +89,9 @@ func SetupRoutes(app *fiber.App) {
 	admin.Delete("/internships/:id", controllers.DeleteInternship)
 
 	admin.Get("/analytics", controllers.GetAnalytics)
+
+	admin.Get("/settings", controllers.GetSettings)
+	admin.Put("/settings/:section", controllers.SaveSettingsSection)
+	admin.Post("/settings/users", controllers.InviteWorkspaceUser)
+	admin.Delete("/settings/users/:id", controllers.DeleteWorkspaceUser)
 }

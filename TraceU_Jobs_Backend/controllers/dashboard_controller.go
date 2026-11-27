@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/mail"
@@ -3437,6 +3438,232 @@ func GetAnalytics(c *fiber.Ctx) error {
 				"top_source_conversion": topSourceConv,
 			},
 		},
+	})
+}
+
+// GetSettings returns all persisted workspace settings sections, workspace members, and recent audit logs.
+func GetSettings(c *fiber.Ctx) error {
+	var (
+		rows    []domain.WorkspaceSetting
+		members []domain.WorkspaceMember
+		logs    []domain.ActivityLog
+		wg      sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		database.DB.Find(&rows)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Order("created_at DESC").Find(&members)
+	}()
+	go func() {
+		defer wg.Done()
+		database.DB.Order("created_at DESC").Limit(50).Find(&logs)
+	}()
+	wg.Wait()
+
+	sections := make(map[string]json.RawMessage)
+	for _, r := range rows {
+		if json.Valid([]byte(r.Payload)) {
+			sections[r.SettingKey] = json.RawMessage(r.Payload)
+		}
+	}
+
+	auditLogs := make([]fiber.Map, 0, len(logs))
+	for _, l := range logs {
+		auditLogs = append(auditLogs, fiber.Map{
+			"id":      l.ID,
+			"time":    l.CreatedAt.Format("Jan 2, 2006 03:04 PM"),
+			"user":    "Admin",
+			"role":    "Admin",
+			"action":  l.Title,
+			"details": l.Description,
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Settings retrieved successfully",
+		Data: fiber.Map{
+			"sections":   sections,
+			"users":      members,
+			"audit_logs": auditLogs,
+		},
+	})
+}
+
+// SaveSettingsSection persists a settings section (org, branding, workflow, templates, integrations, security).
+func SaveSettingsSection(c *fiber.Ctx) error {
+	section := strings.ToLower(strings.TrimSpace(c.Params("section")))
+	allowed := map[string]bool{
+		"org":          true,
+		"branding":     true,
+		"workflow":     true,
+		"templates":    true,
+		"integrations": true,
+		"security":     true,
+	}
+	if !allowed[section] {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Unsupported settings section",
+		})
+	}
+
+	rawBody := c.Body()
+	if !json.Valid(rawBody) {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid JSON payload",
+		})
+	}
+
+	if section == "org" {
+		var org struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := json.Unmarshal(rawBody, &org); err == nil {
+			if strings.TrimSpace(org.Name) == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+					Success: false,
+					Message: "Company Name is required",
+				})
+			}
+			if strings.TrimSpace(org.Email) != "" && !isValidEmailAddress(org.Email) {
+				return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+					Success: false,
+					Message: "Must be a valid organization email address",
+				})
+			}
+		}
+	}
+
+	var existing domain.WorkspaceSetting
+	if err := database.DB.Where("setting_key = ?", section).First(&existing).Error; err == nil {
+		existing.Payload = string(rawBody)
+		database.DB.Save(&existing)
+	} else {
+		database.DB.Create(&domain.WorkspaceSetting{
+			SettingKey: section,
+			Payload:    string(rawBody),
+		})
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Updated Settings",
+		Description: fmt.Sprintf("Saved %s configuration", section),
+		EntityType:  "settings",
+		EntityID:    0,
+	})
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("%s settings saved successfully", strings.Title(section)),
+	})
+}
+
+// InviteWorkspaceUser adds a new team member to workspace_members.
+func InviteWorkspaceUser(c *fiber.Ctx) error {
+	var req struct {
+		Name string `json:"name"`
+		Email string `json:"email"`
+		Role string `json:"role"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+			Error:   err.Error(),
+		})
+	}
+
+	name := strings.TrimSpace(req.Name)
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	role := strings.TrimSpace(req.Role)
+	if name == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Full name is required",
+		})
+	}
+	if !isValidEmailAddress(email) {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Must be a valid email address",
+		})
+	}
+	if role == "" {
+		role = "Recruiter"
+	}
+
+	var dup domain.WorkspaceMember
+	if err := database.DB.Where("LOWER(email) = ?", email).First(&dup).Error; err == nil {
+		return c.Status(fiber.StatusConflict).JSON(model.APIResponse{
+			Success: false,
+			Message: "A user with this email already exists in the workspace",
+		})
+	}
+
+	member := domain.WorkspaceMember{
+		Name:   name,
+		Email:  email,
+		Role:   role,
+		Status: "Active",
+	}
+	if result := database.DB.Create(&member); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to invite user",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Invited User",
+		Description: fmt.Sprintf("%s (%s)", member.Email, member.Role),
+		EntityType:  "workspace_member",
+		EntityID:    member.ID,
+	})
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Invited %s successfully!", member.Name),
+		Data:    member,
+	})
+}
+
+// DeleteWorkspaceUser removes a team member from workspace_members.
+func DeleteWorkspaceUser(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid user ID",
+		})
+	}
+
+	var member domain.WorkspaceMember
+	if err := database.DB.First(&member, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "User not found",
+		})
+	}
+
+	database.DB.Delete(&member)
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Removed User",
+		Description: fmt.Sprintf("%s (%s)", member.Email, member.Role),
+		EntityType:  "workspace_member",
+		EntityID:    member.ID,
+	})
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "User removed from workspace",
 	})
 }
 

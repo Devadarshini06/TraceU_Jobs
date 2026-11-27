@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import getGreeting from 'utils/getGreeting';
 import { useBrand } from 'contexts/BrandContext';
 import { PRESET_LOGOS } from 'utils/presetLogos';
+import { getSettings, saveSettingsSection, inviteWorkspaceUser, deleteWorkspaceUser } from 'api/adminSettings';
+import { validateEmail } from 'utils/emailValidation';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -205,40 +207,45 @@ export default function AdminSettings() {
     ];
   });
 
-  const handleInviteUser = () => {
+  const handleInviteUser = async () => {
     const errs = {};
     if (!newUser.name.trim()) errs.name = 'Full name is required';
-    if (!newUser.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newUser.email)) errs.email = 'Valid email is required';
+    const emailErr = validateEmail(newUser.email);
+    if (emailErr) errs.email = emailErr;
     if (Object.keys(errs).length > 0) {
       setInviteErrors(errs);
       return;
     }
-    const added = {
-      id: Date.now(),
-      name: newUser.name.trim(),
-      email: newUser.email.trim(),
-      role: newUser.role,
-      status: 'Active',
-      avatar: avatar2
-    };
-    const updated = [added, ...usersList];
-    setUsersList(updated);
     try {
-      localStorage.setItem('traceu_admin_users', JSON.stringify(updated));
-    } catch (e) {}
-    setOpenInviteDialog(false);
-    setNewUser({ name: '', email: '', role: 'Recruiter' });
-    setInviteErrors({});
-    setSnackbar({ open: true, message: `Invited ${added.name} successfully!`, severity: 'success' });
+      const res = await inviteWorkspaceUser({
+        name: newUser.name.trim(),
+        email: newUser.email.trim(),
+        role: newUser.role
+      });
+      const created = res?.data;
+      if (created) {
+        const mapped = { ...created, avatar: [avatar1, avatar2, avatar3, avatar4, avatar5][(created.id || 0) % 5] };
+        setUsersList((prev) => [mapped, ...prev]);
+      }
+      await loadBackendSettings();
+      setOpenInviteDialog(false);
+      setNewUser({ name: '', email: '', role: 'Recruiter' });
+      setInviteErrors({});
+      setSnackbar({ open: true, message: `Invited ${newUser.name.trim()} successfully!`, severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to invite user', severity: 'error' });
+    }
   };
 
-  const handleDeleteUser = (id) => {
-    const updated = usersList.filter((u) => u.id !== id);
-    setUsersList(updated);
+  const handleDeleteUser = async (id) => {
     try {
-      localStorage.setItem('traceu_admin_users', JSON.stringify(updated));
-    } catch (e) {}
-    setSnackbar({ open: true, message: 'User removed from workspace', severity: 'info' });
+      await deleteWorkspaceUser(id);
+      setUsersList((prev) => prev.filter((u) => u.id !== id));
+      await loadBackendSettings();
+      setSnackbar({ open: true, message: 'User removed from workspace', severity: 'info' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to remove user', severity: 'error' });
+    }
   };
 
   // 4. Workflow Settings State (persisted)
@@ -278,7 +285,7 @@ export default function AdminSettings() {
     };
   });
 
-  const handleAddStage = () => {
+  const handleAddStage = async () => {
     if (!newStageName.trim()) {
       setStageError('Stage name is required');
       return;
@@ -292,7 +299,8 @@ export default function AdminSettings() {
     const updated = [...stages, newStg];
     setStages(updated);
     try {
-      localStorage.setItem('traceu_admin_workflow', JSON.stringify({ stages: updated, stageAutomations }));
+      await saveSettingsSection('workflow', { stages: updated, stageAutomations });
+      await loadBackendSettings();
     } catch (e) {}
     setOpenAddStageDialog(false);
     setNewStageName('');
@@ -300,11 +308,12 @@ export default function AdminSettings() {
     setSnackbar({ open: true, message: `Added stage "${newStg.name}" to workflow!`, severity: 'success' });
   };
 
-  const handleDeleteStage = (id) => {
+  const handleDeleteStage = async (id) => {
     const updated = stages.filter((s) => s.id !== id);
     setStages(updated);
     try {
-      localStorage.setItem('traceu_admin_workflow', JSON.stringify({ stages: updated, stageAutomations }));
+      await saveSettingsSection('workflow', { stages: updated, stageAutomations });
+      await loadBackendSettings();
     } catch (e) {}
     setSnackbar({ open: true, message: 'Workflow stage removed', severity: 'info' });
   };
@@ -350,7 +359,7 @@ Best regards,
     ];
   });
 
-  const handleToggleIntegration = (id) => {
+  const handleToggleIntegration = async (id) => {
     const updated = integrationsList.map((item) => {
       if (item.id === id) {
         const nextState = !item.connected;
@@ -365,7 +374,8 @@ Best regards,
     });
     setIntegrationsList(updated);
     try {
-      localStorage.setItem('traceu_admin_integrations', JSON.stringify(updated));
+      await saveSettingsSection('integrations', { items: updated });
+      await loadBackendSettings();
     } catch (e) {}
   };
 
@@ -397,71 +407,116 @@ Best regards,
   const [auditActionFilter, setAuditActionFilter] = useState('All');
   const [auditUserFilter, setAuditUserFilter] = useState('All');
   const [auditSearch, setAuditSearch] = useState('');
-  const [auditLogs] = useState([
-    { time: 'Oct 21, 2025 10:24 AM', user: 'Sarah Johnson', role: 'Admin', action: 'Updated Settings', details: 'Changed company settings' },
-    { time: 'Oct 21, 2025 09:15 AM', user: 'Rajesh Kumar', role: 'Recruiter', action: 'Created Job', details: 'Senior Software Engineer' },
-    { time: 'Oct 20, 2025 04:30 PM', user: 'Priya Sharma', role: 'Hiring Manager', action: 'Updated Workflow', details: 'Added Interview stage' },
-    { time: 'Oct 20, 2025 02:10 PM', user: 'Arjun Nair', role: 'Interviewer', action: 'Invited User', details: 'meera@traceu.com' },
-    { time: 'Oct 19, 2025 11:45 AM', user: 'Sarah Johnson', role: 'Admin', action: 'Connected Integration', details: 'Slack integration connected' },
-    { time: 'Oct 18, 2025 09:40 AM', user: 'Vikram Singh', role: 'Recruiter', action: 'Exported Candidates', details: '150 candidates exported' },
-    { time: 'Oct 17, 2025 03:20 PM', user: 'Sarah Johnson', role: 'Admin', action: 'Updated Template', details: 'Interview Invitation template' },
-    { time: 'Oct 16, 2025 11:05 AM', user: 'Meera Joshi', role: 'HR Manager', action: 'Changed Permission', details: 'Promoted to HR Manager' },
-    { time: 'Oct 15, 2025 04:50 PM', user: 'Deepak Patel', role: 'Viewer', action: 'Exported Data', details: 'Candidate test export' }
-  ]);
+  const [auditLogs, setAuditLogs] = useState([]);
+
+  const loadBackendSettings = async () => {
+    try {
+      const res = await getSettings();
+      const data = res?.data || {};
+      const sections = data.sections || {};
+
+      if (sections.org) {
+        setOrgData((prev) => ({ ...prev, ...sections.org }));
+      }
+      if (sections.branding) {
+        const b = sections.branding;
+        if (b.companyName) setCompanyName(b.companyName);
+        if (b.companyLogo !== undefined) setCompanyLogoState(b.companyLogo);
+        if (b.primaryColor) setPrimaryColor(b.primaryColor);
+        if (b.secondaryColor) setSecondaryColor(b.secondaryColor);
+        if (b.accentColor) setAccentColor(b.accentColor);
+        if (b.themeMode) setThemeModeState(b.themeMode);
+        updateBrand(b);
+      }
+      if (Array.isArray(data.users) && data.users.length > 0) {
+        const avatars = [avatar1, avatar2, avatar3, avatar4, avatar5];
+        setUsersList(
+          data.users.map((u) => ({
+            ...u,
+            avatar: avatars[(Number(u.id) || 0) % avatars.length]
+          }))
+        );
+      }
+      if (sections.workflow) {
+        if (Array.isArray(sections.workflow.stages)) setStages(sections.workflow.stages);
+        if (sections.workflow.stageAutomations) setStageAutomations(sections.workflow.stageAutomations);
+      }
+      if (sections.templates) {
+        setTemplateContent((prev) => ({ ...prev, ...sections.templates }));
+      }
+      if (sections.integrations?.items && Array.isArray(sections.integrations.items)) {
+        setIntegrationsList(sections.integrations.items);
+      }
+      if (sections.security) {
+        setSecuritySettings((prev) => ({ ...prev, ...sections.security }));
+      }
+      if (Array.isArray(data.audit_logs)) {
+        setAuditLogs(data.audit_logs);
+      }
+    } catch (e) {
+      // keep existing state if backend fails
+    }
+  };
+
+  useEffect(() => {
+    loadBackendSettings();
+  }, []);
 
   const handleSelectSection = (id) => {
     setActiveSection(id);
   };
 
-  const handleSave = () => {
-    if (activeSection === 'branding') {
-      updateBrand({
-        companyName,
-        companyLogo,
-        primaryColor,
-        secondaryColor,
-        accentColor,
-        themeMode
-      });
-      setSnackbar({ open: true, message: 'Brand identity & theme settings saved successfully!', severity: 'success' });
-    } else if (activeSection === 'org') {
-      try {
+  const handleSave = async () => {
+    try {
+      if (activeSection === 'branding') {
+        const brandingPayload = {
+          companyName,
+          companyLogo,
+          primaryColor,
+          secondaryColor,
+          accentColor,
+          themeMode
+        };
+        await saveSettingsSection('branding', brandingPayload);
+        updateBrand(brandingPayload);
+        setSnackbar({ open: true, message: 'Brand identity & theme settings saved successfully!', severity: 'success' });
+      } else if (activeSection === 'org') {
+        if (orgData.email) {
+          const emailErr = validateEmail(orgData.email);
+          if (emailErr) {
+            setSnackbar({ open: true, message: emailErr, severity: 'error' });
+            return;
+          }
+        }
+        await saveSettingsSection('org', orgData);
         localStorage.setItem('traceu_admin_org_settings', JSON.stringify(orgData));
         if (orgData.name && orgData.name !== companyName) {
           setCompanyName(orgData.name);
           updateBrand({ companyName: orgData.name });
         }
-      } catch (e) {
-        console.warn(e);
-      }
-      setSnackbar({ open: true, message: 'Organization settings saved successfully!', severity: 'success' });
-    } else if (activeSection === 'workflow') {
-      try {
+        setSnackbar({ open: true, message: 'Organization settings saved successfully!', severity: 'success' });
+      } else if (activeSection === 'workflow') {
+        await saveSettingsSection('workflow', { stages, stageAutomations });
         localStorage.setItem('traceu_admin_workflow', JSON.stringify({ stages, stageAutomations }));
-      } catch (e) {
-        console.warn(e);
-      }
-      setSnackbar({ open: true, message: 'Recruitment workflow & stage settings saved successfully!', severity: 'success' });
-    } else if (activeSection === 'templates') {
-      try {
+        setSnackbar({ open: true, message: 'Recruitment workflow & stage settings saved successfully!', severity: 'success' });
+      } else if (activeSection === 'templates') {
+        await saveSettingsSection('templates', templateContent);
         localStorage.setItem('traceu_admin_templates', JSON.stringify(templateContent));
-      } catch (e) {
-        console.warn(e);
-      }
-      setSnackbar({ open: true, message: 'Email template & preferences saved successfully!', severity: 'success' });
-    } else if (activeSection === 'security') {
-      try {
+        setSnackbar({ open: true, message: 'Email template & preferences saved successfully!', severity: 'success' });
+      } else if (activeSection === 'security') {
+        await saveSettingsSection('security', securitySettings);
         localStorage.setItem('traceu_admin_security', JSON.stringify(securitySettings));
-      } catch (e) {
-        console.warn(e);
+        setSnackbar({ open: true, message: 'Security policies & retention rules saved successfully!', severity: 'success' });
+      } else {
+        setSnackbar({ open: true, message: 'Settings saved successfully!', severity: 'success' });
       }
-      setSnackbar({ open: true, message: 'Security policies & retention rules saved successfully!', severity: 'success' });
-    } else {
-      setSnackbar({ open: true, message: 'Settings saved successfully!', severity: 'success' });
+      await loadBackendSettings();
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to save settings', severity: 'error' });
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     if (activeSection === 'branding') {
       resetBrand();
       setPrimaryColor('#530EF0');
@@ -470,6 +525,14 @@ Best regards,
       setCompanyName('TraceU Technologies');
       setCompanyLogoState(null);
       setThemeModeState('light');
+      await saveSettingsSection('branding', {
+        companyName: 'TraceU Technologies',
+        companyLogo: null,
+        primaryColor: '#530EF0',
+        secondaryColor: '#F3EBFF',
+        accentColor: '#10B981',
+        themeMode: 'light'
+      }).catch(() => {});
       setSnackbar({ open: true, message: 'Branding reset to TraceU defaults', severity: 'info' });
     } else if (activeSection === 'org') {
       const defaultOrg = {
@@ -486,11 +549,11 @@ Best regards,
         language: 'English'
       };
       setOrgData(defaultOrg);
-      try {
-        localStorage.setItem('traceu_admin_org_settings', JSON.stringify(defaultOrg));
-      } catch (e) {}
+      await saveSettingsSection('org', defaultOrg).catch(() => {});
+      localStorage.setItem('traceu_admin_org_settings', JSON.stringify(defaultOrg));
       setSnackbar({ open: true, message: 'Organization settings restored to defaults', severity: 'info' });
     }
+    await loadBackendSettings();
   };
 
   // Nav menu items
