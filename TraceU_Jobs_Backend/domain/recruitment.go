@@ -25,6 +25,11 @@ type Job struct {
 	Department    string    `gorm:"column:department;size:100;not null" json:"department"`
 	JobType       string    `gorm:"column:job_type;size:30;default:full_time;not null" json:"job_type"` // full_time, internship, contract, part_time
 	Location      string    `gorm:"column:location;size:100;default:Bengaluru;not null" json:"location"`
+	Company       string    `gorm:"column:company;size:120;default:TraceU;not null" json:"company"`
+	WorkMode      string    `gorm:"column:work_mode;size:40;default:Hybrid;not null" json:"work_mode"`
+	Duration      string    `gorm:"column:duration;size:60;default:3 months;not null" json:"duration"`
+	Stipend       string    `gorm:"column:stipend;size:60;default:₹15,000;not null" json:"stipend"`
+	Skills        string    `gorm:"column:skills;type:text" json:"skills"`
 	Description   string    `gorm:"column:description;type:text" json:"description"`
 	Requirements  string    `gorm:"column:requirements;type:text" json:"requirements"`
 	Source        string    `gorm:"column:source;size:60;default:TraceU;not null" json:"source"`
@@ -137,5 +142,19 @@ type CareersSyncConfig struct {
 
 func (CareersSyncConfig) TableName() string {
 	return "careers_sync_configs"
+}
+
+// CompanyPartner stores invited partner companies for the internship program.
+type CompanyPartner struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Company   string    `gorm:"column:company;size:150;not null" json:"company"`
+	Email     string    `gorm:"column:email;size:150;not null" json:"email"`
+	Program   string    `gorm:"column:program;size:150;default:Summer Internship 2026;not null" json:"program"`
+	Status    string    `gorm:"column:status;size:30;default:invited;not null" json:"status"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+}
+
+func (CompanyPartner) TableName() string {
+	return "company_partners"
 }
 

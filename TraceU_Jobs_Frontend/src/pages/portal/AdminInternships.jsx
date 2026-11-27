@@ -1,5 +1,15 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import CircularProgress from '@mui/material/CircularProgress';
+import {
+  getInternships,
+  createInternship,
+  updateInternship,
+  updateInternshipStatus,
+  deleteInternship,
+  inviteInternshipCompany
+} from 'api/adminInternships';
+import { validateEmail } from 'utils/emailValidation';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -185,17 +195,58 @@ const initialInternships = [
   }
 ];
 
+const companyColorPool = ['#7C3AED', '#2563EB', '#EC4899', '#059669', '#EA580C', '#530EF0', '#0284C7'];
+
+function mapBackendInternship(item) {
+  const numericId = Number(item.id || 0);
+  const company = item.company || 'TraceU';
+  const allSkills = Array.isArray(item.skills)
+    ? item.skills
+    : typeof item.skills === 'string' && item.skills.trim()
+      ? item.skills.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+  const postedOn = item.created_at
+    ? new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : 'Recently';
+
+  return {
+    id: item.id,
+    title: item.title || 'Internship',
+    skills: allSkills.slice(0, 2),
+    allSkills,
+    extraSkillsCount: Math.max(0, allSkills.length - 2),
+    company,
+    companyShort: company.slice(0, 2).toUpperCase(),
+    companyColor: companyColorPool[numericId % companyColorPool.length],
+    location: item.location || 'Bengaluru',
+    mode: item.work_mode || item.mode || 'Hybrid',
+    duration: item.duration || '3 months',
+    stipend: item.stipend || '₹15,000',
+    applications: Number(item.applications || 0),
+    status: item.status || 'Published',
+    postedOn,
+    createdAt: item.created_at || new Date().toISOString()
+  };
+}
+
 export default function AdminInternships() {
   const navigate = useNavigate();
-
-  // State
-  const [internships, setInternships] = useState(initialInternships);
-  const [activeTab, setActiveTab] = useState(0); // 0: All (24), 1: Published (18), 2: Draft (4), 3: Paused (2), 4: Closed (0)
+  const [internships, setInternships] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [editingInternship, setEditingInternship] = useState(null);
+  const [overview, setOverview] = useState({ applied: 0, shortlisted: 0, interview: 0, selected: 0, rejected: 0 });
+  const [participatingCompanies, setParticipatingCompanies] = useState(0);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [locationFilter, setLocationFilter] = useState('All');
   const [workModeFilter, setWorkModeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [sortBy, setSortBy] = useState('Newest first');
+  const [sortAnchor, setSortAnchor] = useState(null);
   const [page, setPage] = useState(1);
+  const rowsPerPage = 8;
 
   // Dialogs
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
@@ -219,9 +270,34 @@ export default function AdminInternships() {
   const [inviteCompany, setInviteCompany] = useState({ company: '', email: '', program: 'Summer Internship 2026' });
   const [inviteCompanyErrors, setInviteCompanyErrors] = useState({});
 
+  const loadInternshipsData = async () => {
+    try {
+      setLoading(true);
+      const res = await getInternships();
+      const payload = res?.data || {};
+      const mapped = (payload.internships || []).map(mapBackendInternship);
+      setInternships(mapped);
+      setOverview(payload.overview || { applied: 0, shortlisted: 0, interview: 0, selected: 0, rejected: 0 });
+      setParticipatingCompanies(Number(payload.participating_companies || 0));
+      setRecentActivity(payload.recent_activity || []);
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.message || 'Failed to load internships',
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInternshipsData();
+  }, []);
+
   // Filtered internships
   const filteredInternships = useMemo(() => {
-    return internships.filter((item) => {
+    const filtered = internships.filter((item) => {
       // Tab filter
       if (activeTab === 1 && item.status !== 'Published') return false;
       if (activeTab === 2 && item.status !== 'Draft') return false;
@@ -239,13 +315,31 @@ export default function AdminInternships() {
         const matchTitle = item.title.toLowerCase().includes(q);
         const matchComp = item.company.toLowerCase().includes(q);
         const matchLoc = item.location.toLowerCase().includes(q);
-        const matchSkill = item.skills.some((s) => s.toLowerCase().includes(q));
+        const matchSkill = (item.allSkills || item.skills).some((s) => s.toLowerCase().includes(q));
         if (!matchTitle && !matchComp && !matchLoc && !matchSkill) return false;
       }
 
       return true;
     });
-  }, [internships, activeTab, statusFilter, locationFilter, workModeFilter, searchQuery]);
+
+    const sorted = [...filtered];
+    if (sortBy === 'Most Applications') {
+      sorted.sort((a, b) => (b.applications || 0) - (a.applications || 0));
+    } else if (sortBy === 'Title (A-Z)') {
+      sorted.sort((a, b) => a.title.localeCompare(b.title));
+    } else {
+      sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    }
+    return sorted;
+  }, [internships, activeTab, statusFilter, locationFilter, workModeFilter, searchQuery, sortBy]);
+
+  const totalInternshipsCount = internships.length;
+  const publishedCount = internships.filter((i) => i.status === 'Published').length;
+  const draftCount = internships.filter((i) => i.status === 'Draft').length;
+  const pausedCount = internships.filter((i) => i.status === 'Paused').length;
+  const closedCount = internships.filter((i) => i.status === 'Closed').length;
+  const totalApplicationsCount =
+    overview.applied + overview.shortlisted + overview.interview + overview.selected + overview.rejected;
 
   const handleOpenMenu = (e, item) => {
     e.stopPropagation();
@@ -258,41 +352,9 @@ export default function AdminInternships() {
     setMenuItem(null);
   };
 
-  const handleCreateInternship = () => {
-    const errors = {};
-    if (!newInternship.title.trim()) {
-      errors.title = 'Internship title is required';
-    } else if (newInternship.title.trim().length < 5) {
-      errors.title = 'Internship title must be at least 5 characters';
-    }
-
-    if (Object.keys(errors).length > 0) {
-      setCreateInternErrors(errors);
-      setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'error' });
-      return;
-    }
-
-    const skillList = newInternship.skills ? newInternship.skills.split(',').map((s) => s.trim()) : ['General'];
-    const created = {
-      id: `INT-00${internships.length + 1}`,
-      title: newInternship.title.trim(),
-      skills: skillList.slice(0, 2),
-      extraSkillsCount: Math.max(0, skillList.length - 2),
-      company: newInternship.company,
-      companyShort: newInternship.company.slice(0, 2).toUpperCase(),
-      companyColor: '#530EF0',
-      location: newInternship.location,
-      mode: newInternship.mode,
-      duration: newInternship.duration,
-      stipend: newInternship.stipend,
-      applications: 0,
-      status: newInternship.status,
-      postedOn: 'Today'
-    };
-    setInternships([created, ...internships]);
-    setOpenCreateDialog(false);
+  const resetCreateForm = () => {
+    setEditingInternship(null);
     setCreateInternErrors({});
-    setSnackbar({ open: true, message: `Internship "${created.title}" published!`, severity: 'success' });
     setNewInternship({
       title: '',
       company: 'TraceU',
@@ -303,6 +365,113 @@ export default function AdminInternships() {
       skills: 'React, JavaScript',
       status: 'Published'
     });
+  };
+
+  const handleCreateInternship = async () => {
+    const errors = {};
+    if (!newInternship.title.trim()) {
+      errors.title = 'Internship title is required';
+    } else if (newInternship.title.trim().length < 3) {
+      errors.title = 'Internship title must be at least 3 characters';
+    }
+    if (!newInternship.company.trim()) {
+      errors.company = 'Company name is required';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setCreateInternErrors(errors);
+      setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'error' });
+      return;
+    }
+
+    const payload = {
+      title: newInternship.title.trim(),
+      company: newInternship.company.trim(),
+      location: newInternship.location.trim() || 'Bengaluru',
+      work_mode: newInternship.mode || 'Hybrid',
+      duration: newInternship.duration.trim() || '3 months',
+      stipend: newInternship.stipend.trim() || '₹15,000',
+      skills: newInternship.skills.trim(),
+      status: newInternship.status || 'Published'
+    };
+
+    try {
+      setSubmitting(true);
+      if (editingInternship?.id) {
+        const res = await updateInternship(editingInternship.id, payload);
+        const updated = mapBackendInternship(res.data);
+        setInternships((prev) => prev.map((i) => (i.id === editingInternship.id ? updated : i)));
+        setSnackbar({ open: true, message: `Internship "${updated.title}" updated!`, severity: 'success' });
+      } else {
+        await createInternship(payload);
+        await loadInternshipsData();
+        setSnackbar({ open: true, message: `Internship "${payload.title}" created!`, severity: 'success' });
+      }
+      setOpenCreateDialog(false);
+      resetCreateForm();
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to save internship', severity: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStatusChange = async (item, status) => {
+    try {
+      await updateInternshipStatus(item.id, status);
+      setInternships((prev) => prev.map((i) => (i.id === item.id ? { ...i, status } : i)));
+      setSnackbar({ open: true, message: `Internship status updated to ${status}`, severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to update status', severity: 'error' });
+    }
+  };
+
+  const handleDeleteInternship = async (item) => {
+    try {
+      await deleteInternship(item.id);
+      setInternships((prev) => prev.filter((i) => i.id !== item.id));
+      setSnackbar({ open: true, message: `Internship "${item.title}" deleted`, severity: 'info' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to delete internship', severity: 'error' });
+    }
+  };
+
+  const handleInviteCompanySubmit = async () => {
+    const errors = {};
+    if (!inviteCompany.company.trim()) {
+      errors.company = 'Company Name is required';
+    } else if (inviteCompany.company.trim().length < 2) {
+      errors.company = 'Company Name must be at least 2 characters';
+    }
+
+    const emailErr = validateEmail(inviteCompany.email);
+    if (emailErr) {
+      errors.email = emailErr;
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setInviteCompanyErrors(errors);
+      setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'error' });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await inviteInternshipCompany({
+        company: inviteCompany.company.trim(),
+        email: inviteCompany.email.trim(),
+        program: inviteCompany.program.trim() || 'Summer Internship 2026'
+      });
+      await loadInternshipsData();
+      setOpenCompanyDialog(false);
+      setInviteCompany({ company: '', email: '', program: 'Summer Internship 2026' });
+      setInviteCompanyErrors({});
+      setSnackbar({ open: true, message: 'Invitation email dispatched to partner!', severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to send invitation', severity: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -401,7 +570,7 @@ export default function AdminInternships() {
         {[
           {
             title: 'Active Internships',
-            count: 24,
+            count: publishedCount,
             change: '+20%',
             subtitle: 'Currently open positions',
             icon: <ShoppingOutlined style={{ fontSize: 18 }} />,
@@ -410,7 +579,7 @@ export default function AdminInternships() {
           },
           {
             title: 'Total Applications',
-            count: 486,
+            count: totalApplicationsCount,
             change: '+32%',
             subtitle: 'From students',
             icon: <TeamOutlined style={{ fontSize: 18 }} />,
@@ -419,7 +588,7 @@ export default function AdminInternships() {
           },
           {
             title: 'Shortlisted Students',
-            count: 72,
+            count: overview.shortlisted,
             change: '+18%',
             subtitle: 'In selection process',
             icon: <ReadOutlined style={{ fontSize: 18 }} />,
@@ -428,7 +597,7 @@ export default function AdminInternships() {
           },
           {
             title: 'Participating Companies',
-            count: 18,
+            count: participatingCompanies,
             change: '+12%',
             subtitle: 'Active company partners',
             icon: <BankOutlined style={{ fontSize: 18 }} />,
@@ -527,7 +696,10 @@ export default function AdminInternships() {
             >
               <Tabs
                 value={activeTab}
-                onChange={(e, v) => setActiveTab(v)}
+                onChange={(e, v) => {
+                  setActiveTab(v);
+                  setPage(1);
+                }}
                 sx={{
                   '& .MuiTabs-indicator': { bgcolor: '#530EF0', height: 3, borderRadius: '3px 3px 0 0' },
                   '& .MuiTab-root': {
@@ -540,16 +712,34 @@ export default function AdminInternships() {
                   }
                 }}
               >
-                <Tab label="All Internships (24)" />
-                <Tab label="Published (18)" />
-                <Tab label="Draft (4)" />
-                <Tab label="Paused (2)" />
-                <Tab label="Closed (0)" />
+                <Tab label={`All Internships (${totalInternshipsCount})`} />
+                <Tab label={`Published (${publishedCount})`} />
+                <Tab label={`Draft (${draftCount})`} />
+                <Tab label={`Paused (${pausedCount})`} />
+                <Tab label={`Closed (${closedCount})`} />
               </Tabs>
 
-              <Typography variant="caption" sx={{ color: '#6B7280', fontWeight: 500, my: 1 }}>
-                Sort by: <strong>Newest first ⌵</strong>
-              </Typography>
+              <Button
+                size="small"
+                onClick={(e) => setSortAnchor(e.currentTarget)}
+                sx={{ color: '#6B7280', fontWeight: 500, my: 1, textTransform: 'none', fontSize: 12.5 }}
+              >
+                Sort by: <strong style={{ marginLeft: 4, color: '#111827' }}>{sortBy} ⌵</strong>
+              </Button>
+              <Menu anchorEl={sortAnchor} open={Boolean(sortAnchor)} onClose={() => setSortAnchor(null)}>
+                {['Newest first', 'Most Applications', 'Title (A-Z)'].map((opt) => (
+                  <MenuItem
+                    key={opt}
+                    selected={sortBy === opt}
+                    onClick={() => {
+                      setSortBy(opt);
+                      setSortAnchor(null);
+                    }}
+                  >
+                    {opt}
+                  </MenuItem>
+                ))}
+              </Menu>
             </Box>
 
             {/* Filter Bar */}
@@ -821,10 +1011,10 @@ export default function AdminInternships() {
               }}
             >
               <Typography variant="caption" sx={{ color: '#6B7280' }}>
-                Showing 1-8 of 24 internships
+                Showing {filteredInternships.length === 0 ? 0 : (page - 1) * rowsPerPage + 1}-{Math.min(page * rowsPerPage, filteredInternships.length)} of {filteredInternships.length} internships
               </Typography>
               <Pagination
-                count={3}
+                count={Math.max(1, Math.ceil(filteredInternships.length / rowsPerPage))}
                 page={page}
                 onChange={(e, val) => setPage(val)}
                 size="small"
@@ -993,7 +1183,7 @@ export default function AdminInternships() {
                       }}
                     >
                       <Typography variant="h6" sx={{ fontWeight: 800, color: '#111827', fontSize: '1rem', lineHeight: 1 }}>
-                        486
+                        {totalApplicationsCount}
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11 }}>
                         Total
@@ -1005,65 +1195,28 @@ export default function AdminInternships() {
                 {/* Donut Legend */}
                 <Grid size={{ xs: 7 }}>
                   <Stack spacing={1}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#530EF0' }} />
-                        <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 12.5 }}>
-                          Applied
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
-                        256 (53%)
-                      </Typography>
-                    </Stack>
-
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#3B82F6' }} />
-                        <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 12.5 }}>
-                          Shortlisted
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
-                        72 (15%)
-                      </Typography>
-                    </Stack>
-
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#F59E0B' }} />
-                        <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 12.5 }}>
-                          Interview
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
-                        28 (6%)
-                      </Typography>
-                    </Stack>
-
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#10B981' }} />
-                        <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 12.5 }}>
-                          Selected
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
-                        18 (4%)
-                      </Typography>
-                    </Stack>
-
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#EF4444' }} />
-                        <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 12.5 }}>
-                          Rejected
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
-                        112 (22%)
-                      </Typography>
-                    </Stack>
+                    {[
+                      { label: 'Applied', count: overview.applied, color: '#530EF0' },
+                      { label: 'Shortlisted', count: overview.shortlisted, color: '#3B82F6' },
+                      { label: 'Interview', count: overview.interview, color: '#F59E0B' },
+                      { label: 'Selected', count: overview.selected, color: '#10B981' },
+                      { label: 'Rejected', count: overview.rejected, color: '#EF4444' }
+                    ].map((st) => {
+                      const pct = totalApplicationsCount > 0 ? Math.round((st.count / totalApplicationsCount) * 100) : 0;
+                      return (
+                        <Stack key={st.label} direction="row" justifyContent="space-between" alignItems="center">
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: st.color }} />
+                            <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 12.5 }}>
+                              {st.label}
+                            </Typography>
+                          </Stack>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
+                            {st.count} ({pct}%)
+                          </Typography>
+                        </Stack>
+                      );
+                    })}
                   </Stack>
                 </Grid>
               </Grid>
@@ -1267,113 +1420,40 @@ export default function AdminInternships() {
               </Stack>
 
               <Stack spacing={1.8}>
-                <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                  <Box
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: '50%',
-                      bgcolor: 'rgba(59, 130, 246, 0.1)',
-                      color: '#3B82F6',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 12,
-                      mt: 0.2
-                    }}
-                  >
-                    <TeamOutlined />
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13 }}>
-                      New application received
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11.5 }}>
-                      by Arjun Kumar for Frontend Developer Intern • 2h ago
-                    </Typography>
-                  </Box>
-                </Stack>
-
-                <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                  <Box
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: '50%',
-                      bgcolor: 'rgba(16, 185, 129, 0.1)',
-                      color: '#10B981',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 12,
-                      mt: 0.2
-                    }}
-                  >
-                    <CheckCircleOutlined />
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13 }}>
-                      Student shortlisted
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11.5 }}>
-                      by Sneha Iyer for Data Analyst Intern • 5h ago
-                    </Typography>
-                  </Box>
-                </Stack>
-
-                <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                  <Box
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: '50%',
-                      bgcolor: 'rgba(83, 14, 240, 0.1)',
-                      color: '#530EF0',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 12,
-                      mt: 0.2
-                    }}
-                  >
-                    <ReadOutlined />
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13 }}>
-                      Internship published
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11.5 }}>
-                      UI/UX Design Intern by CreativeHub • 1d ago
-                    </Typography>
-                  </Box>
-                </Stack>
-
-                <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                  <Box
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: '50%',
-                      bgcolor: 'rgba(124, 58, 237, 0.1)',
-                      color: '#7C3AED',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 12,
-                      mt: 0.2
-                    }}
-                  >
-                    <BankOutlined />
-                  </Box>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13 }}>
-                      Company registered
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11.5 }}>
-                      TechSolutions Pvt. Ltd. • 1d ago
-                    </Typography>
-                  </Box>
-                </Stack>
+                {recentActivity.length === 0 ? (
+                  <Typography variant="caption" sx={{ color: '#9CA3AF' }}>
+                    No recent internship activity yet.
+                  </Typography>
+                ) : (
+                  recentActivity.map((act, idx) => (
+                    <Stack key={act.id || idx} direction="row" spacing={1.5} alignItems="flex-start">
+                      <Box
+                        sx={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: '50%',
+                          bgcolor: act.entity_type === 'internship_company' ? 'rgba(124, 58, 237, 0.1)' : 'rgba(83, 14, 240, 0.1)',
+                          color: act.entity_type === 'internship_company' ? '#7C3AED' : '#530EF0',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 12,
+                          mt: 0.2
+                        }}
+                      >
+                        {act.entity_type === 'internship_company' ? <BankOutlined /> : <ReadOutlined />}
+                      </Box>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13 }}>
+                          {act.title}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11.5 }}>
+                          {act.description}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  ))
+                )}
               </Stack>
             </Card>
           </Stack>
@@ -1384,8 +1464,22 @@ export default function AdminInternships() {
       <Menu anchorEl={menuAnchorEl} open={Boolean(menuAnchorEl)} onClose={handleCloseMenu}>
         <MenuItem
           onClick={() => {
+            const target = menuItem;
             handleCloseMenu();
-            setSnackbar({ open: true, message: `Editing ${menuItem?.title}`, severity: 'info' });
+            if (!target) return;
+            setEditingInternship(target);
+            setNewInternship({
+              title: target.title || '',
+              company: target.company || 'TraceU',
+              location: target.location || 'Bengaluru',
+              mode: target.mode || 'Hybrid',
+              duration: target.duration || '3 months',
+              stipend: target.stipend || '₹15,000',
+              skills: (target.allSkills || target.skills || []).join(', '),
+              status: target.status || 'Published'
+            });
+            setCreateInternErrors({});
+            setOpenCreateDialog(true);
           }}
         >
           Edit Internship
@@ -1396,30 +1490,49 @@ export default function AdminInternships() {
             navigate('/admin/applications');
           }}
         >
-          View Applications ({menuItem?.applications})
+          View Applications ({menuItem?.applications ?? 0})
         </MenuItem>
         <MenuItem
           onClick={() => {
+            const target = menuItem;
             handleCloseMenu();
-            setInternships(internships.map((i) => (i.id === menuItem?.id ? { ...i, status: 'Closed' } : i)));
-            setSnackbar({ open: true, message: 'Internship status updated to Closed', severity: 'warning' });
+            if (target) handleStatusChange(target, target.status === 'Published' ? 'Paused' : 'Published');
+          }}
+        >
+          {menuItem?.status === 'Published' ? 'Pause Internship' : 'Publish Internship'}
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const target = menuItem;
+            handleCloseMenu();
+            if (target) handleStatusChange(target, 'Closed');
           }}
         >
           Close Internship
         </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const target = menuItem;
+            handleCloseMenu();
+            if (target) handleDeleteInternship(target);
+          }}
+          sx={{ color: '#EF4444' }}
+        >
+          Delete Internship
+        </MenuItem>
       </Menu>
 
-      {/* Dialog: Create Internship */}
+      {/* Dialog: Create / Edit Internship */}
       <Dialog
         open={openCreateDialog}
         onClose={() => {
           setOpenCreateDialog(false);
-          setCreateInternErrors({});
+          resetCreateForm();
         }}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 700 }}>+ Create New Internship</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700 }}>{editingInternship ? 'Edit Internship' : '+ Create New Internship'}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <TextField
@@ -1515,15 +1628,22 @@ export default function AdminInternships() {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setOpenCreateDialog(false)} sx={{ textTransform: 'none', color: '#6B7280' }}>
+          <Button
+            onClick={() => {
+              setOpenCreateDialog(false);
+              resetCreateForm();
+            }}
+            sx={{ textTransform: 'none', color: '#6B7280' }}
+          >
             Cancel
           </Button>
           <Button
             variant="contained"
+            disabled={submitting}
             onClick={handleCreateInternship}
             sx={{ bgcolor: '#530EF0', textTransform: 'none', fontWeight: 600, '&:hover': { bgcolor: '#430bc2' } }}
           >
-            Create Internship
+            {submitting ? 'Saving...' : editingInternship ? 'Save Changes' : 'Create Internship'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1589,35 +1709,11 @@ export default function AdminInternships() {
           </Button>
           <Button
             variant="contained"
-            onClick={() => {
-              const errors = {};
-              const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-              if (!inviteCompany.company.trim()) {
-                errors.company = 'Company Name is required';
-              } else if (inviteCompany.company.trim().length < 5) {
-                errors.company = 'Company Name must be at least 5 characters';
-              }
-
-              if (!inviteCompany.email.trim()) {
-                errors.email = 'HR Email is required';
-              } else if (!emailRegex.test(inviteCompany.email.trim())) {
-                errors.email = 'Must be a valid email address';
-              }
-
-              if (Object.keys(errors).length > 0) {
-                setInviteCompanyErrors(errors);
-                setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'error' });
-                return;
-              }
-
-              setOpenCompanyDialog(false);
-              setInviteCompany({ company: '', email: '', program: 'Summer Internship 2026' });
-              setInviteCompanyErrors({});
-              setSnackbar({ open: true, message: 'Invitation email dispatched to partner!', severity: 'success' });
-            }}
+            disabled={submitting}
+            onClick={handleInviteCompanySubmit}
             sx={{ bgcolor: '#530EF0', textTransform: 'none', fontWeight: 600 }}
           >
-            Send Invitation
+            {submitting ? 'Sending...' : 'Send Invitation'}
           </Button>
         </DialogActions>
       </Dialog>

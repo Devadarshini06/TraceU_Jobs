@@ -205,3 +205,22 @@ type CreateInterviewRequest struct {
 	Notes         string    `json:"notes"`
 }
 
+// CreateInternshipRequest creates or updates an internship posting.
+type CreateInternshipRequest struct {
+	Title    string `json:"title"`
+	Company  string `json:"company"`
+	Location string `json:"location"`
+	WorkMode string `json:"work_mode"`
+	Duration string `json:"duration"`
+	Stipend  string `json:"stipend"`
+	Skills   string `json:"skills"`
+	Status   string `json:"status"`
+}
+
+// InviteCompanyRequest invites a partner company to the internship program.
+type InviteCompanyRequest struct {
+	Company string `json:"company"`
+	Email   string `json:"email"`
+	Program string `json:"program"`
+}
+

@@ -2594,3 +2594,420 @@ func RemoveFromTalentPool(c *fiber.Ctx) error {
 	})
 }
 
+func normalizeInternshipStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "published", "open", "active":
+		return "open"
+	case "draft":
+		return "draft"
+	case "paused":
+		return "paused"
+	case "closed":
+		return "closed"
+	default:
+		return "open"
+	}
+}
+
+func internshipStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "open", "published", "active":
+		return "Published"
+	case "draft":
+		return "Draft"
+	case "paused":
+		return "Paused"
+	case "closed":
+		return "Closed"
+	default:
+		return "Published"
+	}
+}
+
+// GetInternships returns all internship postings, application stage overview, partner count, and recent activity.
+func GetInternships(c *fiber.Ctx) error {
+	var jobs []domain.Job
+	if result := database.DB.Where("job_type = ?", "internship").Order("created_at DESC").Find(&jobs); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to fetch internships",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	jobIDs := make([]uint, 0, len(jobs))
+	companySet := make(map[string]struct{})
+	for _, j := range jobs {
+		jobIDs = append(jobIDs, j.ID)
+		if strings.TrimSpace(j.Company) != "" {
+			companySet[strings.ToLower(strings.TrimSpace(j.Company))] = struct{}{}
+		}
+	}
+
+	var partners []domain.CompanyPartner
+	database.DB.Find(&partners)
+	for _, p := range partners {
+		if strings.TrimSpace(p.Company) != "" {
+			companySet[strings.ToLower(strings.TrimSpace(p.Company))] = struct{}{}
+		}
+	}
+
+	appCounts := make(map[uint]int64)
+	stageOverview := map[string]int64{
+		"applied":     0,
+		"shortlisted": 0,
+		"interview":   0,
+		"selected":    0,
+		"rejected":    0,
+	}
+
+	if len(jobIDs) > 0 {
+		var apps []domain.Application
+		database.DB.Where("job_id IN ?", jobIDs).Find(&apps)
+		for _, a := range apps {
+			appCounts[a.JobID]++
+			st := strings.ToLower(strings.TrimSpace(a.Stage))
+			switch st {
+			case "applied", "screening":
+				stageOverview["applied"]++
+			case "shortlisted":
+				stageOverview["shortlisted"]++
+			case "interview":
+				stageOverview["interview"]++
+			case "selected", "offered", "hired":
+				stageOverview["selected"]++
+			case "rejected":
+				stageOverview["rejected"]++
+			default:
+				stageOverview["applied"]++
+			}
+		}
+	}
+
+	formatted := make([]fiber.Map, 0, len(jobs))
+	for _, j := range jobs {
+		formatted = append(formatted, fiber.Map{
+			"id":           j.ID,
+			"title":        j.Title,
+			"company":      j.Company,
+			"location":     j.Location,
+			"work_mode":    j.WorkMode,
+			"duration":     j.Duration,
+			"stipend":      j.Stipend,
+			"skills":       j.Skills,
+			"status":       internshipStatusLabel(j.Status),
+			"applications": appCounts[j.ID],
+			"created_at":   j.CreatedAt,
+		})
+	}
+
+	var recentActivity []domain.ActivityLog
+	database.DB.Where("entity_type IN ?", []string{"internship", "internship_company"}).
+		Order("created_at DESC").Limit(6).Find(&recentActivity)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Internships retrieved successfully",
+		Data: fiber.Map{
+			"internships":            formatted,
+			"overview":               stageOverview,
+			"participating_companies": len(companySet),
+			"recent_activity":        recentActivity,
+		},
+	})
+}
+
+// CreateInternship creates a new internship posting.
+func CreateInternship(c *fiber.Ctx) error {
+	var req model.CreateInternshipRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+			Error:   err.Error(),
+		})
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if len(title) < 3 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Internship title must be at least 3 characters",
+		})
+	}
+
+	company := strings.TrimSpace(req.Company)
+	if company == "" {
+		company = "TraceU"
+	}
+	location := strings.TrimSpace(req.Location)
+	if location == "" {
+		location = "Bengaluru"
+	}
+	workMode := strings.TrimSpace(req.WorkMode)
+	if workMode == "" {
+		workMode = "Hybrid"
+	}
+	duration := strings.TrimSpace(req.Duration)
+	if duration == "" {
+		duration = "3 months"
+	}
+	stipend := strings.TrimSpace(req.Stipend)
+	if stipend == "" {
+		stipend = "₹15,000"
+	}
+	skills := strings.TrimSpace(req.Skills)
+	status := normalizeInternshipStatus(req.Status)
+
+	job := domain.Job{
+		Title:       title,
+		Department:  "Internship",
+		JobType:     "internship",
+		Location:    location,
+		Company:     company,
+		WorkMode:    workMode,
+		Duration:    duration,
+		Stipend:     stipend,
+		Skills:      skills,
+		Source:      company,
+		Status:      status,
+		Description: fmt.Sprintf("%s internship at %s (%s, %s)", title, company, workMode, duration),
+	}
+
+	if result := database.DB.Create(&job); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to create internship",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Internship published",
+		Description: fmt.Sprintf("%s by %s", job.Title, job.Company),
+		EntityType:  "internship",
+		EntityID:    job.ID,
+	})
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: "Internship created successfully",
+		Data: fiber.Map{
+			"id":           job.ID,
+			"title":        job.Title,
+			"company":      job.Company,
+			"location":     job.Location,
+			"work_mode":    job.WorkMode,
+			"duration":     job.Duration,
+			"stipend":      job.Stipend,
+			"skills":       job.Skills,
+			"status":       internshipStatusLabel(job.Status),
+			"applications": 0,
+			"created_at":   job.CreatedAt,
+		},
+	})
+}
+
+// UpdateInternship edits an existing internship posting.
+func UpdateInternship(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid internship ID",
+		})
+	}
+
+	var job domain.Job
+	if result := database.DB.Where("id = ? AND job_type = ?", id, "internship").First(&job); result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Internship not found",
+		})
+	}
+
+	var req model.CreateInternshipRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+			Error:   err.Error(),
+		})
+	}
+
+	if t := strings.TrimSpace(req.Title); t != "" {
+		job.Title = t
+	}
+	if comp := strings.TrimSpace(req.Company); comp != "" {
+		job.Company = comp
+		job.Source = comp
+	}
+	if loc := strings.TrimSpace(req.Location); loc != "" {
+		job.Location = loc
+	}
+	if wm := strings.TrimSpace(req.WorkMode); wm != "" {
+		job.WorkMode = wm
+	}
+	if dur := strings.TrimSpace(req.Duration); dur != "" {
+		job.Duration = dur
+	}
+	if st := strings.TrimSpace(req.Stipend); st != "" {
+		job.Stipend = st
+	}
+	if req.Skills != "" {
+		job.Skills = strings.TrimSpace(req.Skills)
+	}
+	if req.Status != "" {
+		job.Status = normalizeInternshipStatus(req.Status)
+	}
+
+	database.DB.Save(&job)
+
+	var appCount int64
+	database.DB.Model(&domain.Application{}).Where("job_id = ?", job.ID).Count(&appCount)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Internship updated successfully",
+		Data: fiber.Map{
+			"id":           job.ID,
+			"title":        job.Title,
+			"company":      job.Company,
+			"location":     job.Location,
+			"work_mode":    job.WorkMode,
+			"duration":     job.Duration,
+			"stipend":      job.Stipend,
+			"skills":       job.Skills,
+			"status":       internshipStatusLabel(job.Status),
+			"applications": appCount,
+			"created_at":   job.CreatedAt,
+		},
+	})
+}
+
+// UpdateInternshipStatus updates an internship's status.
+func UpdateInternshipStatus(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid internship ID",
+		})
+	}
+
+	var job domain.Job
+	if result := database.DB.Where("id = ? AND job_type = ?", id, "internship").First(&job); result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Internship not found",
+		})
+	}
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+		})
+	}
+
+	job.Status = normalizeInternshipStatus(req.Status)
+	database.DB.Save(&job)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Internship status updated to %s", internshipStatusLabel(job.Status)),
+		Data: fiber.Map{
+			"id":     job.ID,
+			"status": internshipStatusLabel(job.Status),
+		},
+	})
+}
+
+// DeleteInternship deletes an internship posting.
+func DeleteInternship(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid internship ID",
+		})
+	}
+
+	var job domain.Job
+	if result := database.DB.Where("id = ? AND job_type = ?", id, "internship").First(&job); result.Error != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Internship not found",
+		})
+	}
+
+	database.DB.Delete(&job)
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Internship deleted successfully",
+	})
+}
+
+// InviteInternshipCompany invites and records a company partner for the internship program.
+func InviteInternshipCompany(c *fiber.Ctx) error {
+	var req model.InviteCompanyRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+			Error:   err.Error(),
+		})
+	}
+
+	company := strings.TrimSpace(req.Company)
+	if len(company) < 2 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Company name is required",
+		})
+	}
+
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	if !isValidEmailAddress(email) {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Must be a valid email address",
+		})
+	}
+
+	program := strings.TrimSpace(req.Program)
+	if program == "" {
+		program = "Summer Internship 2026"
+	}
+
+	partner := domain.CompanyPartner{
+		Company: company,
+		Email:   email,
+		Program: program,
+		Status:  "invited",
+	}
+	if result := database.DB.Create(&partner); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to save company invitation",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Company registered",
+		Description: fmt.Sprintf("%s • %s", partner.Company, partner.Program),
+		EntityType:  "internship_company",
+		EntityID:    partner.ID,
+	})
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Invitation sent to %s!", partner.Company),
+		Data:    partner,
+	})
+}
+
