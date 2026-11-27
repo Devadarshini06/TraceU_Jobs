@@ -1375,10 +1375,12 @@ export default function AdminApplications() {
                     <PhoneOutlined style={{ fontSize: 12, color: '#6929e2' }} />
                     <Typography sx={{ fontSize: 12, color: '#374151' }}>{selectedApp.phone}</Typography>
                   </Stack>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <LinkedinFilled style={{ fontSize: 12, color: '#0077b5' }} />
-                    <Typography sx={{ fontSize: 12, color: '#0077b5', fontWeight: 600 }}>linkedin.com/in/{selectedApp.name.toLowerCase().replace(' ', '-')}</Typography>
-                  </Stack>
+                  {selectedApp.linkedinUrl && (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <LinkedinFilled style={{ fontSize: 12, color: '#0077b5' }} />
+                      <Typography sx={{ fontSize: 12, color: '#0077b5', fontWeight: 600 }}>{selectedApp.linkedinUrl}</Typography>
+                    </Stack>
+                  )}
                 </Stack>
 
                 {/* 3 Action Buttons */}

@@ -365,21 +365,26 @@ function mapBackendPoolCandidate(item) {
     skills: allSkills.slice(0, 2),
     extraSkillsCount: Math.max(0, allSkills.length - 2),
     allSkills,
-    location: item.location || 'Bengaluru',
+    location: item.location || '—',
     source: item.source || 'Talent Pool',
     availability: item.availability || 'Active',
+    noticePeriod: item.notice_period || item.availability || 'Active',
     addedOn,
     createdAt: rawCreatedAt || new Date().toISOString(),
     avatar,
     linkedin: item.linkedin_url || item.linkedin || '',
     github: item.github_url || item.github || '',
-    salary: item.salary || 'Competitive',
-    about: item.about || `${roleStr} with ${expStr} experience.`,
+    salary: item.salary || '—',
+    about: item.about || '—',
     matchScore: item.matchScore ?? 85,
-    education: item.education || { degree: 'B.Tech / B.E.', school: 'University', period: 'Graduated' },
+    education: item.education || {
+      degree: item.education_degree || '—',
+      school: item.education_school || '—',
+      period: item.education_period || '—'
+    },
     experience: {
       title: roleStr,
-      company: item.source || 'Talent Pool',
+      company: item.company || '—',
       period: expStr
     },
     resumeName,
@@ -440,12 +445,18 @@ export default function AdminTalentPool() {
     email: '',
     phone: '',
     role: '',
+    company: '',
     exp: '2+ yrs',
     skills: '',
     location: 'Bengaluru',
     source: 'LinkedIn',
     availability: 'Active',
-    salary: '₹10 - 14 LPA',
+    noticePeriod: 'Immediate',
+    salary: '',
+    linkedin: '',
+    educationDegree: '',
+    educationSchool: '',
+    educationPeriod: '',
     about: ''
   });
   const [addPoolErrors, setAddPoolErrors] = useState({});
@@ -637,6 +648,26 @@ export default function AdminTalentPool() {
       errors.location = 'Location is required';
     }
 
+    if (!newCandidate.salary.trim()) {
+      errors.salary = 'Expected Salary is required';
+    }
+
+    if (!newCandidate.company.trim()) {
+      errors.company = 'Current / Previous Company is required';
+    }
+
+    if (!newCandidate.educationDegree.trim()) {
+      errors.educationDegree = 'Degree is required';
+    }
+
+    if (!newCandidate.educationSchool.trim()) {
+      errors.educationSchool = 'University / College is required';
+    }
+
+    if (!newCandidate.about.trim()) {
+      errors.about = 'Summary / About is required';
+    }
+
     if (!resumeFile) {
       errors.resume = 'Resume file (PDF/DOC/DOCX) is required';
     }
@@ -660,13 +691,19 @@ export default function AdminTalentPool() {
         email: newCandidate.email.trim(),
         phone: newCandidate.phone.trim(),
         current_role: newCandidate.role.trim(),
+        company: newCandidate.company.trim(),
         experience: newCandidate.exp.trim(),
         skills: skillList.join(', '),
         location: newCandidate.location.trim(),
         source: newCandidate.source || 'LinkedIn',
         availability: newCandidate.availability || 'Active',
-        salary: newCandidate.salary || '₹10 - 14 LPA',
-        about: newCandidate.about.trim() || `Qualified professional with experience in ${skillList.join(', ')}.`,
+        notice_period: newCandidate.noticePeriod || 'Immediate',
+        salary: newCandidate.salary.trim(),
+        linkedin_url: newCandidate.linkedin.trim(),
+        education_degree: newCandidate.educationDegree.trim(),
+        education_school: newCandidate.educationSchool.trim(),
+        education_period: newCandidate.educationPeriod.trim() || 'Graduated',
+        about: newCandidate.about.trim(),
         resume_url: uploadedData.resume_url || '',
         resume_name: uploadedData.resume_name || resumeFile.name,
         resume_size: uploadedData.resume_size || `${(resumeFile.size / (1024 * 1024)).toFixed(2)} MB`
@@ -683,12 +720,18 @@ export default function AdminTalentPool() {
         email: '',
         phone: '',
         role: '',
+        company: '',
         exp: '2+ yrs',
         skills: '',
         location: 'Bengaluru',
         source: 'LinkedIn',
         availability: 'Active',
-        salary: '₹10 - 14 LPA',
+        noticePeriod: 'Immediate',
+        salary: '',
+        linkedin: '',
+        educationDegree: '',
+        educationSchool: '',
+        educationPeriod: '',
         about: ''
       });
     } catch (err) {
@@ -1650,7 +1693,7 @@ export default function AdminTalentPool() {
                       {selectedCandidate.role}
                     </Typography>
                     <Typography variant="caption" sx={{ color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.3 }}>
-                      <EnvironmentOutlined style={{ fontSize: 11 }} /> {selectedCandidate.location}, Karnataka • {selectedCandidate.exp}
+                      <EnvironmentOutlined style={{ fontSize: 11 }} /> {selectedCandidate.location} • {selectedCandidate.exp}
                     </Typography>
                   </Box>
                 </Stack>
@@ -1669,12 +1712,14 @@ export default function AdminTalentPool() {
                       {selectedCandidate.phone}
                     </Typography>
                   </Stack>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <LinkedinFilled style={{ color: '#0A66C2', fontSize: 13 }} />
-                    <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 500, fontSize: 12.5 }}>
-                      linkedin.com/in/{selectedCandidate.name.toLowerCase().replace(/\s+/g, '-')}
-                    </Typography>
-                  </Stack>
+                  {selectedCandidate.linkedin && (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <LinkedinFilled style={{ color: '#0A66C2', fontSize: 13 }} />
+                      <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 500, fontSize: 12.5 }}>
+                        {selectedCandidate.linkedin}
+                      </Typography>
+                    </Stack>
+                  )}
                 </Stack>
 
                 {/* 3 Action Buttons */}
@@ -1782,7 +1827,7 @@ export default function AdminTalentPool() {
                             Availability
                           </Typography>
                           <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5, mt: 0.2 }}>
-                            Immediate
+                            {selectedCandidate.noticePeriod || selectedCandidate.availability}
                           </Typography>
                         </Box>
                       </Grid>
@@ -2196,6 +2241,23 @@ export default function AdminTalentPool() {
                 />
               </Grid>
               <Grid size={{ xs: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Current / Previous Company"
+                  size="small"
+                  value={newCandidate.company}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, company: e.target.value });
+                    if (addPoolErrors.company) setAddPoolErrors({ ...addPoolErrors, company: '' });
+                  }}
+                  error={Boolean(addPoolErrors.company)}
+                  helperText={addPoolErrors.company}
+                  required
+                />
+              </Grid>
+            </Grid>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 4 }}>
                 <Select
                   fullWidth
                   size="small"
@@ -2206,6 +2268,87 @@ export default function AdminTalentPool() {
                   <MenuItem value="Passive">Passive</MenuItem>
                   <MenuItem value="Not Contacted">Not Contacted</MenuItem>
                 </Select>
+              </Grid>
+              <Grid size={{ xs: 4 }}>
+                <Select
+                  fullWidth
+                  size="small"
+                  value={newCandidate.noticePeriod}
+                  onChange={(e) => setNewCandidate({ ...newCandidate, noticePeriod: e.target.value })}
+                >
+                  <MenuItem value="Immediate">Immediate</MenuItem>
+                  <MenuItem value="15 Days">15 Days</MenuItem>
+                  <MenuItem value="30 Days">30 Days</MenuItem>
+                  <MenuItem value="60 Days">60 Days</MenuItem>
+                </Select>
+              </Grid>
+              <Grid size={{ xs: 4 }}>
+                <TextField
+                  fullWidth
+                  label="Expected Salary"
+                  size="small"
+                  placeholder="e.g. ₹12 - 16 LPA"
+                  value={newCandidate.salary}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, salary: e.target.value });
+                    if (addPoolErrors.salary) setAddPoolErrors({ ...addPoolErrors, salary: '' });
+                  }}
+                  error={Boolean(addPoolErrors.salary)}
+                  helperText={addPoolErrors.salary}
+                  required
+                />
+              </Grid>
+            </Grid>
+            <TextField
+              fullWidth
+              label="LinkedIn Profile URL"
+              size="small"
+              placeholder="https://linkedin.com/in/username"
+              value={newCandidate.linkedin}
+              onChange={(e) => setNewCandidate({ ...newCandidate, linkedin: e.target.value })}
+            />
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 4 }}>
+                <TextField
+                  fullWidth
+                  label="Education Degree"
+                  size="small"
+                  placeholder="e.g. B.Tech in CS"
+                  value={newCandidate.educationDegree}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, educationDegree: e.target.value });
+                    if (addPoolErrors.educationDegree) setAddPoolErrors({ ...addPoolErrors, educationDegree: '' });
+                  }}
+                  error={Boolean(addPoolErrors.educationDegree)}
+                  helperText={addPoolErrors.educationDegree}
+                  required
+                />
+              </Grid>
+              <Grid size={{ xs: 4 }}>
+                <TextField
+                  fullWidth
+                  label="University / College"
+                  size="small"
+                  placeholder="e.g. IIT / Anna Univ"
+                  value={newCandidate.educationSchool}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, educationSchool: e.target.value });
+                    if (addPoolErrors.educationSchool) setAddPoolErrors({ ...addPoolErrors, educationSchool: '' });
+                  }}
+                  error={Boolean(addPoolErrors.educationSchool)}
+                  helperText={addPoolErrors.educationSchool}
+                  required
+                />
+              </Grid>
+              <Grid size={{ xs: 4 }}>
+                <TextField
+                  fullWidth
+                  label="Graduation Year / Period"
+                  size="small"
+                  placeholder="e.g. 2019 - 2023"
+                  value={newCandidate.educationPeriod}
+                  onChange={(e) => setNewCandidate({ ...newCandidate, educationPeriod: e.target.value })}
+                />
               </Grid>
             </Grid>
             <Box
@@ -2251,7 +2394,13 @@ export default function AdminTalentPool() {
               label="Summary / About"
               size="small"
               value={newCandidate.about}
-              onChange={(e) => setNewCandidate({ ...newCandidate, about: e.target.value })}
+              onChange={(e) => {
+                setNewCandidate({ ...newCandidate, about: e.target.value });
+                if (addPoolErrors.about) setAddPoolErrors({ ...addPoolErrors, about: '' });
+              }}
+              error={Boolean(addPoolErrors.about)}
+              helperText={addPoolErrors.about}
+              required
             />
           </Stack>
         </DialogContent>

@@ -1654,20 +1654,36 @@ func CreateCandidate(c *fiber.Ctx) error {
 		}
 	}
 
+	avail := "Active"
+	if req.Availability != "" {
+		avail = normalizeAvailability(req.Availability)
+	}
+
 	cand := domain.Candidate{
-		Name:        name,
-		Email:       email,
-		Phone:       strings.TrimSpace(req.Phone),
-		CurrentRole: currentRole,
-		Department:  dept,
-		Experience:  exp,
-		Skills:      strings.TrimSpace(req.Skills),
-		Location:    loc,
-		Source:      source,
-		Status:      status,
-		GithubURL:   strings.TrimSpace(req.GithubURL),
-		LinkedInURL: strings.TrimSpace(req.LinkedInURL),
-		PhotoURL:    strings.TrimSpace(req.PhotoURL),
+		Name:            name,
+		Email:           email,
+		Phone:           strings.TrimSpace(req.Phone),
+		CurrentRole:     currentRole,
+		Department:      dept,
+		Experience:      exp,
+		Skills:          strings.TrimSpace(req.Skills),
+		Location:        loc,
+		Source:          source,
+		Status:          status,
+		Availability:    avail,
+		NoticePeriod:    strings.TrimSpace(req.NoticePeriod),
+		Salary:          strings.TrimSpace(req.Salary),
+		About:           strings.TrimSpace(req.About),
+		Company:         strings.TrimSpace(req.Company),
+		EducationDegree: strings.TrimSpace(req.EducationDegree),
+		EducationSchool: strings.TrimSpace(req.EducationSchool),
+		EducationPeriod: strings.TrimSpace(req.EducationPeriod),
+		GithubURL:       strings.TrimSpace(req.GithubURL),
+		LinkedInURL:     strings.TrimSpace(req.LinkedInURL),
+		PhotoURL:        strings.TrimSpace(req.PhotoURL),
+		ResumeURL:       strings.TrimSpace(req.ResumeURL),
+		ResumeName:      strings.TrimSpace(req.ResumeName),
+		ResumeSize:      strings.TrimSpace(req.ResumeSize),
 	}
 
 	if result := database.DB.Create(&cand); result.Error != nil {
@@ -1756,6 +1772,27 @@ func UpdateCandidate(c *fiber.Ctx) error {
 	}
 	if req.LinkedInURL != "" {
 		cand.LinkedInURL = strings.TrimSpace(req.LinkedInURL)
+	}
+	if req.NoticePeriod != "" {
+		cand.NoticePeriod = strings.TrimSpace(req.NoticePeriod)
+	}
+	if req.Salary != "" {
+		cand.Salary = strings.TrimSpace(req.Salary)
+	}
+	if req.About != "" {
+		cand.About = strings.TrimSpace(req.About)
+	}
+	if req.Company != "" {
+		cand.Company = strings.TrimSpace(req.Company)
+	}
+	if req.EducationDegree != "" {
+		cand.EducationDegree = strings.TrimSpace(req.EducationDegree)
+	}
+	if req.EducationSchool != "" {
+		cand.EducationSchool = strings.TrimSpace(req.EducationSchool)
+	}
+	if req.EducationPeriod != "" {
+		cand.EducationPeriod = strings.TrimSpace(req.EducationPeriod)
 	}
 	if req.PhotoURL != "" {
 		cand.PhotoURL = strings.TrimSpace(req.PhotoURL)
@@ -2219,9 +2256,36 @@ func AddToTalentPool(c *fiber.Ctx) error {
 		cand.Location = loc
 		cand.Source = source
 		cand.Availability = avail
+		if req.NoticePeriod != "" {
+			cand.NoticePeriod = strings.TrimSpace(req.NoticePeriod)
+		}
 		cand.Salary = salary
 		if req.About != "" {
 			cand.About = strings.TrimSpace(req.About)
+		}
+		if req.Company != "" {
+			cand.Company = strings.TrimSpace(req.Company)
+		}
+		if req.EducationDegree != "" {
+			cand.EducationDegree = strings.TrimSpace(req.EducationDegree)
+		}
+		if req.EducationSchool != "" {
+			cand.EducationSchool = strings.TrimSpace(req.EducationSchool)
+		}
+		if req.EducationPeriod != "" {
+			cand.EducationPeriod = strings.TrimSpace(req.EducationPeriod)
+		}
+		if req.LinkedInURL != "" {
+			cand.LinkedInURL = strings.TrimSpace(req.LinkedInURL)
+		}
+		if req.ResumeURL != "" {
+			cand.ResumeURL = strings.TrimSpace(req.ResumeURL)
+		}
+		if req.ResumeName != "" {
+			cand.ResumeName = strings.TrimSpace(req.ResumeName)
+		}
+		if req.ResumeSize != "" {
+			cand.ResumeSize = strings.TrimSpace(req.ResumeSize)
 		}
 		database.DB.Save(&cand)
 		return c.Status(fiber.StatusOK).JSON(model.APIResponse{
@@ -2232,20 +2296,29 @@ func AddToTalentPool(c *fiber.Ctx) error {
 	}
 
 	cand = domain.Candidate{
-		Name:         name,
-		Email:        email,
-		Phone:        strings.TrimSpace(req.Phone),
-		CurrentRole:  role,
-		Department:   "Engineering",
-		Experience:   exp,
-		Skills:       strings.TrimSpace(req.Skills),
-		Location:     loc,
-		Source:       source,
-		Status:       "active",
-		Availability: avail,
-		Salary:       salary,
-		About:        strings.TrimSpace(req.About),
-		InTalentPool: true,
+		Name:            name,
+		Email:           email,
+		Phone:           strings.TrimSpace(req.Phone),
+		CurrentRole:     role,
+		Department:      "Engineering",
+		Experience:      exp,
+		Skills:          strings.TrimSpace(req.Skills),
+		Location:        loc,
+		Source:          source,
+		Status:          "active",
+		Availability:    avail,
+		NoticePeriod:    strings.TrimSpace(req.NoticePeriod),
+		Salary:          salary,
+		About:           strings.TrimSpace(req.About),
+		Company:         strings.TrimSpace(req.Company),
+		EducationDegree: strings.TrimSpace(req.EducationDegree),
+		EducationSchool: strings.TrimSpace(req.EducationSchool),
+		EducationPeriod: strings.TrimSpace(req.EducationPeriod),
+		LinkedInURL:     strings.TrimSpace(req.LinkedInURL),
+		ResumeURL:       strings.TrimSpace(req.ResumeURL),
+		ResumeName:      strings.TrimSpace(req.ResumeName),
+		ResumeSize:      strings.TrimSpace(req.ResumeSize),
+		InTalentPool:    true,
 	}
 	if result := database.DB.Create(&cand); result.Error != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{

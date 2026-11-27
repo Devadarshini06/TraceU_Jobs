@@ -52,9 +52,14 @@ type Candidate struct {
 	Location     string    `gorm:"column:location;size:100;default:Bengaluru;not null" json:"location"`
 	Source       string    `gorm:"column:source;size:60;default:LinkedIn;not null" json:"source"`
 	Status       string    `gorm:"column:status;size:30;default:active;not null" json:"status"`
-	Availability string    `gorm:"column:availability;size:40;default:Active;not null" json:"availability"`
-	Salary       string    `gorm:"column:salary;size:60" json:"salary"`
-	About        string    `gorm:"column:about;type:text" json:"about"`
+	Availability    string    `gorm:"column:availability;size:40;default:Active;not null" json:"availability"`
+	NoticePeriod    string    `gorm:"column:notice_period;size:40" json:"notice_period"`
+	Salary          string    `gorm:"column:salary;size:60" json:"salary"`
+	About           string    `gorm:"column:about;type:text" json:"about"`
+	Company         string    `gorm:"column:company;size:120" json:"company"`
+	EducationDegree string    `gorm:"column:education_degree;size:120" json:"education_degree"`
+	EducationSchool string    `gorm:"column:education_school;size:150" json:"education_school"`
+	EducationPeriod string    `gorm:"column:education_period;size:60" json:"education_period"`
 	InTalentPool bool      `gorm:"column:in_talent_pool;default:false;not null" json:"in_talent_pool"`
 	GithubURL    string    `gorm:"column:github_url;size:255" json:"github_url"`
 	LinkedInURL  string    `gorm:"column:linkedin_url;size:255" json:"linkedin_url"`

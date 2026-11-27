@@ -357,12 +357,20 @@ function mapBackendCandidate(item) {
     inTalentPool: Boolean(item?.in_talent_pool),
     addedOn,
     createdAt: item?.created_at,
-    about: `${item?.current_role || 'Candidate'} with ${item?.experience || '2+ yrs'} of experience based in ${item?.location || 'Bengaluru'}.`,
-    availability: 'Immediate',
-    salary: 'Negotiable',
+    about: item?.about || '—',
+    availability: item?.notice_period || item?.availability || 'Immediate',
+    salary: item?.salary || '—',
     prefLocation: item?.location || 'Bengaluru',
-    education: { degree: 'B.Tech / B.E.', school: 'University', period: 'Completed' },
-    experience: { title: item?.current_role || 'Software Engineer', company: 'Current / Previous', period: item?.experience || '2+ yrs' },
+    education: {
+      degree: item?.education_degree || '—',
+      school: item?.education_school || '—',
+      period: item?.education_period || '—'
+    },
+    experience: {
+      title: item?.current_role || 'Software Engineer',
+      company: item?.company || '—',
+      period: item?.experience || '2+ yrs'
+    },
     resumeName: item?.resume_name || '',
     resumeSize: item?.resume_size || '',
     resumeUrl: item?.resume_url || '',
@@ -428,6 +436,13 @@ export default function AdminCandidates() {
   const [newDept, setNewDept] = useState('Engineering');
   const [newExp, setNewExp] = useState('2+ yrs');
   const [newSkills, setNewSkills] = useState('');
+  const [newCompany, setNewCompany] = useState('');
+  const [newSalary, setNewSalary] = useState('');
+  const [newNoticePeriod, setNewNoticePeriod] = useState('Immediate');
+  const [newEduDegree, setNewEduDegree] = useState('');
+  const [newEduSchool, setNewEduSchool] = useState('');
+  const [newEduPeriod, setNewEduPeriod] = useState('');
+  const [newAbout, setNewAbout] = useState('');
   const [newLoc, setNewLoc] = useState('Bengaluru');
   const [newSource, setNewSource] = useState('LinkedIn');
   const [newStatus, setNewStatus] = useState('Active');
@@ -555,6 +570,13 @@ export default function AdminCandidates() {
     setNewGithub('');
     setNewLinkedin('');
     setNewPhoto('');
+    setNewCompany('');
+    setNewSalary('');
+    setNewNoticePeriod('Immediate');
+    setNewEduDegree('');
+    setNewEduSchool('');
+    setNewEduPeriod('');
+    setNewAbout('');
     setAddErrors({});
   };
 
@@ -573,6 +595,13 @@ export default function AdminCandidates() {
     setNewGithub(cand.githubUrl || '');
     setNewLinkedin(cand.linkedinUrl || '');
     setNewPhoto(cand.photoUrl || '');
+    setNewCompany(cand.experience?.company === '—' ? '' : cand.experience?.company || '');
+    setNewSalary(cand.salary === '—' ? '' : cand.salary || '');
+    setNewNoticePeriod(cand.availability || 'Immediate');
+    setNewEduDegree(cand.education?.degree === '—' ? '' : cand.education?.degree || '');
+    setNewEduSchool(cand.education?.school === '—' ? '' : cand.education?.school || '');
+    setNewEduPeriod(cand.education?.period === '—' ? '' : cand.education?.period || '');
+    setNewAbout(cand.about === '—' ? '' : cand.about || '');
     setAddErrors({});
     setAddDialogOpen(true);
   };
@@ -638,7 +667,14 @@ export default function AdminCandidates() {
       status: newStatus,
       github_url: newGithub.trim(),
       linkedin_url: newLinkedin.trim(),
-      photo_url: newPhoto.trim()
+      photo_url: newPhoto.trim(),
+      company: newCompany.trim(),
+      salary: newSalary.trim(),
+      notice_period: newNoticePeriod,
+      education_degree: newEduDegree.trim(),
+      education_school: newEduSchool.trim(),
+      education_period: newEduPeriod.trim(),
+      about: newAbout.trim()
     };
 
     setSubmitting(true);
@@ -2316,6 +2352,34 @@ export default function AdminCandidates() {
                 </TextField>
               </Grid>
             </Grid>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField fullWidth label="Current / Previous Company" placeholder="e.g. Acme Corp" value={newCompany} onChange={(e) => setNewCompany(e.target.value)} />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField fullWidth label="Expected Salary" placeholder="e.g. ₹12 - 16 LPA" value={newSalary} onChange={(e) => setNewSalary(e.target.value)} />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField fullWidth select label="Availability / Notice" value={newNoticePeriod} onChange={(e) => setNewNoticePeriod(e.target.value)}>
+                  <MenuItem value="Immediate">Immediate</MenuItem>
+                  <MenuItem value="15 Days">15 Days</MenuItem>
+                  <MenuItem value="30 Days">30 Days</MenuItem>
+                  <MenuItem value="60 Days">60 Days</MenuItem>
+                </TextField>
+              </Grid>
+            </Grid>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField fullWidth label="Education Degree" placeholder="e.g. B.Tech in CS" value={newEduDegree} onChange={(e) => setNewEduDegree(e.target.value)} />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField fullWidth label="University / College" placeholder="e.g. Anna University" value={newEduSchool} onChange={(e) => setNewEduSchool(e.target.value)} />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField fullWidth label="Graduation Period" placeholder="e.g. 2019 - 2023" value={newEduPeriod} onChange={(e) => setNewEduPeriod(e.target.value)} />
+              </Grid>
+            </Grid>
+            <TextField fullWidth multiline rows={2} label="Summary / About" placeholder="Brief candidate bio & highlights" value={newAbout} onChange={(e) => setNewAbout(e.target.value)} />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
