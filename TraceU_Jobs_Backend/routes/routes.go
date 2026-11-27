@@ -93,6 +93,7 @@ func SetupRoutes(app *fiber.App) {
 
 	admin.Get("/settings", controllers.GetSettings)
 	admin.Put("/settings/:section", controllers.SaveSettingsSection)
+	admin.Get("/settings/audit-logs", controllers.GetAuditLogs)
 	admin.Get("/settings/security/export", controllers.ExportSecurityData)
 	admin.Post("/settings/integrations/:id/test", controllers.TestIntegrationConnection)
 	admin.Post("/settings/users", controllers.InviteWorkspaceUser)

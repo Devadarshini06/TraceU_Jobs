@@ -3876,3 +3876,87 @@ func ExportSecurityData(c *fiber.Ctx) error {
 	})
 }
 
+// GetAuditLogs returns paginated, filterable activity audit logs for Settings -> Audit Logs.
+func GetAuditLogs(c *fiber.Ctx) error {
+	page := c.QueryInt("page", 1)
+	if page < 1 {
+		page = 1
+	}
+	limit := c.QueryInt("limit", 10)
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+	dateRange := strings.ToLower(strings.TrimSpace(c.Query("range", "all")))
+	actionFilter := strings.TrimSpace(c.Query("action", "All"))
+	userFilter := strings.TrimSpace(c.Query("user", "All"))
+	search := strings.TrimSpace(c.Query("search", ""))
+
+	query := database.DB.Model(&domain.ActivityLog{})
+
+	now := time.Now()
+	switch dateRange {
+	case "7d":
+		query = query.Where("created_at >= ?", now.AddDate(0, 0, -7))
+	case "30d":
+		query = query.Where("created_at >= ?", now.AddDate(0, 0, -30))
+	case "90d":
+		query = query.Where("created_at >= ?", now.AddDate(0, 0, -90))
+	}
+
+	if actionFilter != "" && !strings.EqualFold(actionFilter, "All") {
+		query = query.Where("title = ?", actionFilter)
+	}
+
+	// Currently all activity logs are attributed to "Admin"
+	if userFilter != "" && !strings.EqualFold(userFilter, "All") && !strings.EqualFold(userFilter, "Admin") {
+		query = query.Where("1 = 0")
+	}
+
+	if search != "" {
+		like := "%" + search + "%"
+		query = query.Where("title LIKE ? OR description LIKE ? OR entity_type LIKE ?", like, like, like)
+	}
+
+	var total int64
+	query.Count(&total)
+
+	var rows []domain.ActivityLog
+	offset := (page - 1) * limit
+	query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&rows)
+
+	var distinctActions []string
+	database.DB.Model(&domain.ActivityLog{}).Distinct("title").Order("title ASC").Pluck("title", &distinctActions)
+
+	logs := make([]fiber.Map, 0, len(rows))
+	for _, l := range rows {
+		logs = append(logs, fiber.Map{
+			"id":          l.ID,
+			"time":        l.CreatedAt.Format("Jan 2, 2006 03:04 PM"),
+			"user":        "Admin",
+			"role":        "Administrator",
+			"action":      l.Title,
+			"details":     l.Description,
+			"entity_type": l.EntityType,
+		})
+	}
+
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Audit logs retrieved successfully",
+		Data: fiber.Map{
+			"logs":        logs,
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
+			"actions":     distinctActions,
+			"users":       []string{"Admin"},
+		},
+	})
+}
+

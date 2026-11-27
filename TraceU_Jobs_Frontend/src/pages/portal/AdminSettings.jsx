@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import getGreeting from 'utils/getGreeting';
 import { useBrand } from 'contexts/BrandContext';
 import { PRESET_LOGOS } from 'utils/presetLogos';
-import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser, testIntegrationConnection, exportSecurityData } from 'api/adminSettings';
+import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser, testIntegrationConnection, exportSecurityData, getAuditLogs } from 'api/adminSettings';
 import Menu from '@mui/material/Menu';
 import { validateEmail } from 'utils/emailValidation';
 
@@ -652,11 +652,47 @@ export default function AdminSettings() {
   };
 
   // 8. Audit Logs State
-  const [auditDate, setAuditDate] = useState('Oct 1, 2025 - Oct 31, 2025');
+  const [auditDate, setAuditDate] = useState('all');
   const [auditActionFilter, setAuditActionFilter] = useState('All');
   const [auditUserFilter, setAuditUserFilter] = useState('All');
   const [auditSearch, setAuditSearch] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditTotalPages, setAuditTotalPages] = useState(1);
+  const [auditActions, setAuditActions] = useState([]);
+  const [auditUsers, setAuditUsers] = useState(['Admin']);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  const fetchAuditLogs = async (pageOverride) => {
+    setAuditLoading(true);
+    try {
+      const res = await getAuditLogs({
+        page: pageOverride ?? auditPage,
+        limit: 10,
+        range: auditDate,
+        action: auditActionFilter,
+        user: auditUserFilter,
+        search: auditSearch.trim()
+      });
+      const d = res?.data || {};
+      setAuditLogs(Array.isArray(d.logs) ? d.logs : []);
+      setAuditTotal(Number(d.total) || 0);
+      setAuditTotalPages(Number(d.total_pages) || 1);
+      if (Array.isArray(d.actions)) setAuditActions(d.actions);
+      if (Array.isArray(d.users) && d.users.length > 0) setAuditUsers(d.users);
+    } catch (e) {
+      // keep existing logs on transient error
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'audit') {
+      fetchAuditLogs();
+    }
+  }, [activeSection, auditDate, auditActionFilter, auditUserFilter, auditSearch, auditPage]);
 
   const loadBackendSettings = async () => {
     try {
@@ -2670,23 +2706,58 @@ export default function AdminSettings() {
                 <Box sx={{ p: 2.2, bgcolor: '#FAFAFB', borderBottom: '1px solid #F3F4F6' }}>
                   <Grid container spacing={1.5} alignItems="center">
                     <Grid size={{ xs: 12, sm: 4 }}>
-                      <Select fullWidth size="small" value={auditDate} onChange={(e) => setAuditDate(e.target.value)} sx={{ bgcolor: '#FFF' }}>
-                        <MenuItem value="Oct 1, 2025 - Oct 31, 2025">Oct 1, 2025 - Oct 31, 2025</MenuItem>
-                        <MenuItem value="Sep 1, 2025 - Sep 30, 2025">Sep 1, 2025 - Sep 30, 2025</MenuItem>
+                      <Select
+                        fullWidth
+                        size="small"
+                        value={auditDate}
+                        onChange={(e) => {
+                          setAuditDate(e.target.value);
+                          setAuditPage(1);
+                        }}
+                        sx={{ bgcolor: '#FFF' }}
+                      >
+                        <MenuItem value="all">All Time</MenuItem>
+                        <MenuItem value="7d">Last 7 Days</MenuItem>
+                        <MenuItem value="30d">Last 30 Days</MenuItem>
+                        <MenuItem value="90d">Last 90 Days</MenuItem>
                       </Select>
                     </Grid>
                     <Grid size={{ xs: 6, sm: 2 }}>
-                      <Select fullWidth size="small" value={auditActionFilter} onChange={(e) => setAuditActionFilter(e.target.value)} sx={{ bgcolor: '#FFF' }}>
+                      <Select
+                        fullWidth
+                        size="small"
+                        value={auditActionFilter}
+                        onChange={(e) => {
+                          setAuditActionFilter(e.target.value);
+                          setAuditPage(1);
+                        }}
+                        sx={{ bgcolor: '#FFF' }}
+                      >
                         <MenuItem value="All">All Actions</MenuItem>
-                        <MenuItem value="Updated Settings">Updated Settings</MenuItem>
-                        <MenuItem value="Created Job">Created Job</MenuItem>
+                        {auditActions.map((act) => (
+                          <MenuItem key={act} value={act}>
+                            {act}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </Grid>
                     <Grid size={{ xs: 6, sm: 2 }}>
-                      <Select fullWidth size="small" value={auditUserFilter} onChange={(e) => setAuditUserFilter(e.target.value)} sx={{ bgcolor: '#FFF' }}>
+                      <Select
+                        fullWidth
+                        size="small"
+                        value={auditUserFilter}
+                        onChange={(e) => {
+                          setAuditUserFilter(e.target.value);
+                          setAuditPage(1);
+                        }}
+                        sx={{ bgcolor: '#FFF' }}
+                      >
                         <MenuItem value="All">All Users</MenuItem>
-                        <MenuItem value="Sarah Johnson">Sarah Johnson</MenuItem>
-                        <MenuItem value="Rajesh Kumar">Rajesh Kumar</MenuItem>
+                        {auditUsers.map((usr) => (
+                          <MenuItem key={usr} value={usr}>
+                            {usr}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </Grid>
                     <Grid size={{ xs: 12, sm: 4 }}>
@@ -2695,7 +2766,10 @@ export default function AdminSettings() {
                         size="small"
                         placeholder="Search by user, action or details..."
                         value={auditSearch}
-                        onChange={(e) => setAuditSearch(e.target.value)}
+                        onChange={(e) => {
+                          setAuditSearch(e.target.value);
+                          setAuditPage(1);
+                        }}
                         InputProps={{
                           startAdornment: (
                             <InputAdornment position="start">
@@ -2721,15 +2795,15 @@ export default function AdminSettings() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {auditLogs
-                        .filter((log) => {
-                          const matchesSearch = log.user.toLowerCase().includes(auditSearch.toLowerCase()) || log.details.toLowerCase().includes(auditSearch.toLowerCase()) || log.action.toLowerCase().includes(auditSearch.toLowerCase());
-                          const matchesAction = auditActionFilter === 'All' || log.action === auditActionFilter;
-                          const matchesUser = auditUserFilter === 'All' || log.user === auditUserFilter;
-                          return matchesSearch && matchesAction && matchesUser;
-                        })
-                        .map((log, idx) => (
-                          <TableRow key={idx} hover>
+                      {auditLogs.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} align="center" sx={{ py: 4, color: '#6B7280', fontSize: 13.5 }}>
+                            {auditLoading ? 'Loading audit logs...' : 'No audit logs found matching your filters.'}
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        auditLogs.map((log, idx) => (
+                          <TableRow key={log.id || idx} hover>
                             <TableCell sx={{ fontSize: 13.5, color: '#6B7280' }}>{log.time}</TableCell>
                             <TableCell>
                               <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13.5 }}>
@@ -2754,14 +2828,25 @@ export default function AdminSettings() {
                             </TableCell>
                             <TableCell sx={{ fontSize: 13.5, color: '#374151' }}>{log.details}</TableCell>
                           </TableRow>
-                        ))}
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </TableContainer>
 
                 <Box sx={{ p: 2, borderTop: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="caption" sx={{ color: '#6B7280' }}>Showing 1-10 of 124 logs</Typography>
-                  <Pagination count={3} size="small" sx={{ '& .Mui-selected': { bgcolor: '#530EF0 !important', color: '#FFF' } }} />
+                  <Typography variant="caption" sx={{ color: '#6B7280' }}>
+                    {auditTotal === 0
+                      ? 'Showing 0 logs'
+                      : `Showing ${(auditPage - 1) * 10 + 1}-${Math.min(auditPage * 10, auditTotal)} of ${auditTotal} logs`}
+                  </Typography>
+                  <Pagination
+                    page={auditPage}
+                    count={auditTotalPages}
+                    onChange={(_, p) => setAuditPage(p)}
+                    size="small"
+                    sx={{ '& .Mui-selected': { bgcolor: '#530EF0 !important', color: '#FFF' } }}
+                  />
                 </Box>
               </Card>
             </Stack>

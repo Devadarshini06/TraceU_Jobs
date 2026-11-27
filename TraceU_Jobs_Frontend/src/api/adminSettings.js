@@ -79,3 +79,14 @@ export async function exportSecurityData() {
   return request('/security/export', { method: 'GET' });
 }
 
+export async function getAuditLogs(params = {}) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') {
+      qs.set(k, String(v));
+    }
+  });
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  return request(`/audit-logs${suffix}`, { method: 'GET' });
+}
+
