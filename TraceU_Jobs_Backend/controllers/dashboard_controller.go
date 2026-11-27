@@ -3541,6 +3541,25 @@ func SaveSettingsSection(c *fiber.Ctx) error {
 		}
 	}
 
+	if section == "security" {
+		var sec struct {
+			PwdLength      string `json:"pwdLength"`
+			SessionTimeout string `json:"sessionTimeout"`
+			CandRetention  string `json:"candRetention"`
+		}
+		if err := json.Unmarshal(rawBody, &sec); err == nil {
+			validPwd := map[string]bool{"": true, "8 characters": true, "10 characters": true, "12 characters": true}
+			validSession := map[string]bool{"": true, "30 minutes": true, "60 minutes": true, "120 minutes": true}
+			validRetention := map[string]bool{"": true, "1 year": true, "2 years": true, "5 years": true}
+			if !validPwd[sec.PwdLength] || !validSession[sec.SessionTimeout] || !validRetention[sec.CandRetention] {
+				return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+					Success: false,
+					Message: "Invalid security policy option",
+				})
+			}
+		}
+	}
+
 	var existing domain.WorkspaceSetting
 	if err := database.DB.Where("setting_key = ?", section).First(&existing).Error; err == nil {
 		existing.Payload = string(rawBody)
@@ -3803,6 +3822,56 @@ func TestIntegrationConnection(c *fiber.Ctx) error {
 			"name":      name,
 			"status":    "healthy",
 			"tested_at": time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+}
+
+// ExportSecurityData exports workspace settings, members, and audit logs when allowExport is enabled.
+func ExportSecurityData(c *fiber.Ctx) error {
+	var secRow domain.WorkspaceSetting
+	allowExport := true
+	if err := database.DB.Where("setting_key = ?", "security").First(&secRow).Error; err == nil && json.Valid([]byte(secRow.Payload)) {
+		var sec struct {
+			AllowExport *bool `json:"allowExport"`
+		}
+		if err := json.Unmarshal([]byte(secRow.Payload), &sec); err == nil && sec.AllowExport != nil {
+			allowExport = *sec.AllowExport
+		}
+	}
+	if !allowExport {
+		return c.Status(fiber.StatusForbidden).JSON(model.APIResponse{
+			Success: false,
+			Message: "Data export is disabled by security policy",
+		})
+	}
+
+	var (
+		settings []domain.WorkspaceSetting
+		members  []domain.WorkspaceMember
+		logs     []domain.ActivityLog
+		wg       sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); database.DB.Find(&settings) }()
+	go func() { defer wg.Done(); database.DB.Find(&members) }()
+	go func() { defer wg.Done(); database.DB.Order("created_at DESC").Limit(100).Find(&logs) }()
+	wg.Wait()
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Exported Workspace Data",
+		Description: "Downloaded GDPR compliance data export",
+		EntityType:  "security",
+		EntityID:    0,
+	})
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Workspace data exported successfully",
+		Data: fiber.Map{
+			"exported_at": time.Now().UTC().Format(time.RFC3339),
+			"settings":    settings,
+			"members":     members,
+			"audit_logs":  logs,
 		},
 	})
 }

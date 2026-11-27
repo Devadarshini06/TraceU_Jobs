@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import getGreeting from 'utils/getGreeting';
 import { useBrand } from 'contexts/BrandContext';
 import { PRESET_LOGOS } from 'utils/presetLogos';
-import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser, testIntegrationConnection } from 'api/adminSettings';
+import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser, testIntegrationConnection, exportSecurityData } from 'api/adminSettings';
 import Menu from '@mui/material/Menu';
 import { validateEmail } from 'utils/emailValidation';
 
@@ -610,27 +610,46 @@ export default function AdminSettings() {
   };
 
   // 7. Security & Data Management State (persisted)
+  const DEFAULT_SECURITY_SETTINGS = {
+    pwdLength: '8 characters',
+    reqUpper: true,
+    reqLower: true,
+    reqNumbers: true,
+    reqSpecial: true,
+    sessionTimeout: '60 minutes',
+    multiSession: false,
+    newDeviceNotify: true,
+    candRetention: '2 years',
+    appRetention: '2 years',
+    anonymizeData: true,
+    allowExport: true,
+    allowDeletion: false
+  };
+
   const [securitySettings, setSecuritySettings] = useState(() => {
     try {
       const stored = localStorage.getItem('traceu_admin_security');
-      if (stored) return JSON.parse(stored);
+      if (stored) return { ...DEFAULT_SECURITY_SETTINGS, ...JSON.parse(stored) };
     } catch (e) {}
-    return {
-      pwdLength: '8 characters',
-      reqUpper: true,
-      reqLower: true,
-      reqNumbers: true,
-      reqSpecial: true,
-      sessionTimeout: '60 minutes',
-      multiSession: false,
-      newDeviceNotify: true,
-      candRetention: '2 years',
-      appRetention: '2 years',
-      anonymizeData: true,
-      allowExport: true,
-      allowDeletion: false
-    };
+    return DEFAULT_SECURITY_SETTINGS;
   });
+
+  const handleExportSecurityData = async () => {
+    try {
+      const res = await exportSecurityData();
+      const blob = new Blob([JSON.stringify(res.data || {}, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `traceu-workspace-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSnackbar({ open: true, message: 'Workspace data exported successfully!', severity: 'success' });
+      await loadBackendSettings();
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to export workspace data', severity: 'error' });
+    }
+  };
 
   // 8. Audit Logs State
   const [auditDate, setAuditDate] = useState('Oct 1, 2025 - Oct 31, 2025');
@@ -827,6 +846,11 @@ export default function AdminSettings() {
         preferences: DEFAULT_APPLICATION_PREFS
       }).catch(() => {});
       setSnackbar({ open: true, message: 'Templates & preferences restored to defaults', severity: 'info' });
+    } else if (activeSection === 'security') {
+      setSecuritySettings(DEFAULT_SECURITY_SETTINGS);
+      localStorage.setItem('traceu_admin_security', JSON.stringify(DEFAULT_SECURITY_SETTINGS));
+      await saveSettingsSection('security', DEFAULT_SECURITY_SETTINGS).catch(() => {});
+      setSnackbar({ open: true, message: 'Security & data management settings restored to defaults', severity: 'info' });
     }
     await loadBackendSettings();
   };
@@ -2612,6 +2636,17 @@ export default function AdminSettings() {
                           sx={{ '& .Mui-checked': { color: '#530EF0' } }}
                         />
                       </Stack>
+                      <Box sx={{ pt: 1 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={!securitySettings.allowExport}
+                          onClick={handleExportSecurityData}
+                          sx={{ textTransform: 'none', borderRadius: '8px', borderColor: '#E5E7EB', color: '#374151', fontSize: 12.5 }}
+                        >
+                          Export Workspace Data (JSON)
+                        </Button>
+                      </Box>
                     </Stack>
                   </Card>
                 </Grid>

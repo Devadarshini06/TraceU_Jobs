@@ -75,3 +75,7 @@ export async function testIntegrationConnection(id, payload) {
   });
 }
 
+export async function exportSecurityData() {
+  return request('/security/export', { method: 'GET' });
+}
+
