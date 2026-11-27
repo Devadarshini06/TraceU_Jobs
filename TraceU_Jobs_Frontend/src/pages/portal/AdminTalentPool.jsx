@@ -72,7 +72,9 @@ import {
 } from 'api/adminTalentPool';
 import { getJobs } from 'api/adminJobs';
 import { createApplication } from 'api/adminApplications';
+import { uploadCandidateResume } from 'api/adminCandidates';
 import { validateEmail } from 'utils/emailValidation';
+import FullScreenResumeDialog from 'components/FullScreenResumeDialog';
 
 // avatar assets
 import avatar1 from 'assets/images/users/avatar-1.png';
@@ -408,6 +410,8 @@ export default function AdminTalentPool() {
   const [jobsList, setJobsList] = useState([]);
   const [parsedImportRows, setParsedImportRows] = useState([]);
   const [importFileName, setImportFileName] = useState('');
+  const [resumeFile, setResumeFile] = useState(null);
+  const [resumeViewerOpen, setResumeViewerOpen] = useState(false);
 
   // Detail panel subtab
   const [detailTab, setDetailTab] = useState(0); // 0: Overview, 1: Resume, 2: Activity, 3: Notes
@@ -613,35 +617,66 @@ export default function AdminTalentPool() {
       errors.email = emailErr;
     }
 
+    if (!newCandidate.phone.trim()) {
+      errors.phone = 'Phone Number is required';
+    }
+
+    if (!newCandidate.role.trim()) {
+      errors.role = 'Current Role is required';
+    }
+
+    if (!newCandidate.exp.trim()) {
+      errors.exp = 'Experience is required';
+    }
+
+    if (!newCandidate.skills.trim()) {
+      errors.skills = 'Key Skills are required';
+    }
+
+    if (!newCandidate.location.trim()) {
+      errors.location = 'Location is required';
+    }
+
+    if (!resumeFile) {
+      errors.resume = 'Resume file (PDF/DOC/DOCX) is required';
+    }
+
     if (Object.keys(errors).length > 0) {
       setAddPoolErrors(errors);
-      setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'error' });
+      setSnackbar({ open: true, message: 'Please fill in all required fields and upload a resume', severity: 'error' });
       return;
     }
 
     try {
       setSubmitting(true);
+      const uploadRes = await uploadCandidateResume(null, resumeFile);
+      const uploadedData = uploadRes?.data || uploadRes || {};
       const skillList = newCandidate.skills
-        ? newCandidate.skills.split(',').map((s) => s.trim()).filter(Boolean)
-        : ['React', 'Node.js'];
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
       const res = await addToTalentPool({
         name: newCandidate.name.trim(),
         email: newCandidate.email.trim(),
-        phone: newCandidate.phone.trim() || '+91 98765 00000',
-        current_role: newCandidate.role.trim() || 'Software Engineer',
-        experience: newCandidate.exp.trim() || '2+ yrs',
+        phone: newCandidate.phone.trim(),
+        current_role: newCandidate.role.trim(),
+        experience: newCandidate.exp.trim(),
         skills: skillList.join(', '),
-        location: newCandidate.location.trim() || 'Bengaluru',
+        location: newCandidate.location.trim(),
         source: newCandidate.source || 'LinkedIn',
         availability: newCandidate.availability || 'Active',
         salary: newCandidate.salary || '₹10 - 14 LPA',
-        about: newCandidate.about.trim() || `Qualified professional with experience in ${skillList.join(', ')}.`
+        about: newCandidate.about.trim() || `Qualified professional with experience in ${skillList.join(', ')}.`,
+        resume_url: uploadedData.resume_url || '',
+        resume_name: uploadedData.resume_name || resumeFile.name,
+        resume_size: uploadedData.resume_size || `${(resumeFile.size / (1024 * 1024)).toFixed(2)} MB`
       });
       const created = mapBackendPoolCandidate(res?.data || res?.candidate || {});
       setCandidates((prev) => [created, ...prev]);
       setSelectedCandidate(created);
       setOpenAddDialog(false);
       setAddPoolErrors({});
+      setResumeFile(null);
       setSnackbar({ open: true, message: `${created.name} added to Talent Pool successfully!`, severity: 'success' });
       setNewCandidate({
         name: '',
@@ -659,7 +694,7 @@ export default function AdminTalentPool() {
     } catch (err) {
       setSnackbar({
         open: true,
-        message: err.response?.data?.error || 'Failed to add candidate to Talent Pool',
+        message: err.message || 'Failed to add candidate to Talent Pool',
         severity: 'error'
       });
     } finally {
@@ -1858,10 +1893,10 @@ export default function AdminTalentPool() {
                           justifyContent: 'space-between'
                         }}
                       >
-                        <Stack direction="row" spacing={1.2} alignItems="center">
+                        <Stack direction="row" spacing={1.2} alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => setResumeViewerOpen(true)}>
                           <FilePdfOutlined style={{ fontSize: 24, color: '#EF4444' }} />
                           <Box>
-                            <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5, '&:hover': { color: '#530EF0', textDecoration: 'underline' } }}>
                               {selectedCandidate.resumeName}
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#9CA3AF', fontSize: 11 }}>
@@ -1874,7 +1909,7 @@ export default function AdminTalentPool() {
                           <Button
                             size="small"
                             variant="outlined"
-                            onClick={() => setSnackbar({ open: true, message: `Viewing verified resume for ${selectedCandidate.name}`, severity: 'info' })}
+                            onClick={() => setResumeViewerOpen(true)}
                             sx={{
                               fontSize: 11.5,
                               py: 0.3,
@@ -1887,7 +1922,18 @@ export default function AdminTalentPool() {
                           >
                             View
                           </Button>
-                          <IconButton size="small" onClick={() => setSnackbar({ open: true, message: `Downloading ${selectedCandidate.resumeName}...`, severity: 'success' })} sx={{ color: '#6B7280' }}>
+                          <IconButton
+                            size="small"
+                            component={selectedCandidate.resumeUrl ? 'a' : 'button'}
+                            href={selectedCandidate.resumeUrl || undefined}
+                            download={selectedCandidate.resumeUrl ? selectedCandidate.resumeName : undefined}
+                            onClick={() => {
+                              if (!selectedCandidate.resumeUrl) {
+                                setResumeViewerOpen(true);
+                              }
+                            }}
+                            sx={{ color: '#6B7280' }}
+                          >
                             <DownloadOutlined style={{ fontSize: 14 }} />
                           </IconButton>
                         </Stack>
@@ -1906,10 +1952,20 @@ export default function AdminTalentPool() {
                       {selectedCandidate.resumeSize} • Parsed & verified by AI Studio
                     </Typography>
                     <Stack direction="row" spacing={1} justifyContent="center">
-                      <Button variant="contained" onClick={() => setSnackbar({ open: true, message: `Opening PDF viewer for ${selectedCandidate.resumeName}`, severity: 'info' })} sx={{ bgcolor: '#530EF0', textTransform: 'none' }} startIcon={<EyeOutlined />}>
+                      <Button variant="contained" onClick={() => setResumeViewerOpen(true)} sx={{ bgcolor: '#530EF0', textTransform: 'none' }} startIcon={<EyeOutlined />}>
                         Open PDF Viewer
                       </Button>
-                      <Button variant="outlined" onClick={() => setSnackbar({ open: true, message: `Downloading ${selectedCandidate.resumeName}...`, severity: 'success' })} sx={{ textTransform: 'none' }} startIcon={<DownloadOutlined />}>
+                      <Button
+                        variant="outlined"
+                        component={selectedCandidate.resumeUrl ? 'a' : 'button'}
+                        href={selectedCandidate.resumeUrl || undefined}
+                        download={selectedCandidate.resumeUrl ? selectedCandidate.resumeName : undefined}
+                        onClick={() => {
+                          if (!selectedCandidate.resumeUrl) setResumeViewerOpen(true);
+                        }}
+                        sx={{ textTransform: 'none' }}
+                        startIcon={<DownloadOutlined />}
+                      >
                         Download
                       </Button>
                     </Stack>
@@ -2029,6 +2085,7 @@ export default function AdminTalentPool() {
         onClose={() => {
           setOpenAddDialog(false);
           setAddPoolErrors({});
+          setResumeFile(null);
         }}
         maxWidth="sm"
         fullWidth
@@ -2038,7 +2095,7 @@ export default function AdminTalentPool() {
           <Stack spacing={2} sx={{ pt: 1 }}>
             <TextField
               fullWidth
-              label="Full Name *"
+              label="Full Name"
               size="small"
               value={newCandidate.name}
               onChange={(e) => {
@@ -2052,7 +2109,7 @@ export default function AdminTalentPool() {
             <TextField
               fullWidth
               type="email"
-              label="Email Address *"
+              label="Email Address"
               size="small"
               value={newCandidate.email}
               onChange={(e) => {
@@ -2068,7 +2125,13 @@ export default function AdminTalentPool() {
               label="Phone Number"
               size="small"
               value={newCandidate.phone}
-              onChange={(e) => setNewCandidate({ ...newCandidate, phone: e.target.value })}
+              onChange={(e) => {
+                setNewCandidate({ ...newCandidate, phone: e.target.value });
+                if (addPoolErrors.phone) setAddPoolErrors({ ...addPoolErrors, phone: '' });
+              }}
+              error={Boolean(addPoolErrors.phone)}
+              helperText={addPoolErrors.phone}
+              required
             />
             <Grid container spacing={2}>
               <Grid size={{ xs: 6 }}>
@@ -2077,7 +2140,13 @@ export default function AdminTalentPool() {
                   label="Current Role"
                   size="small"
                   value={newCandidate.role}
-                  onChange={(e) => setNewCandidate({ ...newCandidate, role: e.target.value })}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, role: e.target.value });
+                    if (addPoolErrors.role) setAddPoolErrors({ ...addPoolErrors, role: '' });
+                  }}
+                  error={Boolean(addPoolErrors.role)}
+                  helperText={addPoolErrors.role}
+                  required
                 />
               </Grid>
               <Grid size={{ xs: 6 }}>
@@ -2086,7 +2155,13 @@ export default function AdminTalentPool() {
                   label="Experience (e.g. 3+ yrs)"
                   size="small"
                   value={newCandidate.exp}
-                  onChange={(e) => setNewCandidate({ ...newCandidate, exp: e.target.value })}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, exp: e.target.value });
+                    if (addPoolErrors.exp) setAddPoolErrors({ ...addPoolErrors, exp: '' });
+                  }}
+                  error={Boolean(addPoolErrors.exp)}
+                  helperText={addPoolErrors.exp}
+                  required
                 />
               </Grid>
             </Grid>
@@ -2096,7 +2171,13 @@ export default function AdminTalentPool() {
               size="small"
               placeholder="React, TypeScript, Node.js"
               value={newCandidate.skills}
-              onChange={(e) => setNewCandidate({ ...newCandidate, skills: e.target.value })}
+              onChange={(e) => {
+                setNewCandidate({ ...newCandidate, skills: e.target.value });
+                if (addPoolErrors.skills) setAddPoolErrors({ ...addPoolErrors, skills: '' });
+              }}
+              error={Boolean(addPoolErrors.skills)}
+              helperText={addPoolErrors.skills}
+              required
             />
             <Grid container spacing={2}>
               <Grid size={{ xs: 6 }}>
@@ -2105,7 +2186,13 @@ export default function AdminTalentPool() {
                   label="Location"
                   size="small"
                   value={newCandidate.location}
-                  onChange={(e) => setNewCandidate({ ...newCandidate, location: e.target.value })}
+                  onChange={(e) => {
+                    setNewCandidate({ ...newCandidate, location: e.target.value });
+                    if (addPoolErrors.location) setAddPoolErrors({ ...addPoolErrors, location: '' });
+                  }}
+                  error={Boolean(addPoolErrors.location)}
+                  helperText={addPoolErrors.location}
+                  required
                 />
               </Grid>
               <Grid size={{ xs: 6 }}>
@@ -2121,6 +2208,42 @@ export default function AdminTalentPool() {
                 </Select>
               </Grid>
             </Grid>
+            <Box
+              sx={{
+                p: 2,
+                border: `1.5px dashed ${addPoolErrors.resume ? '#EF4444' : '#D1D5DB'}`,
+                borderRadius: '10px',
+                bgcolor: '#F9FAFB',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 2
+              }}
+            >
+              <Box>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827' }}>
+                  Resume (PDF / DOC / DOCX) *
+                </Typography>
+                <Typography variant="caption" sx={{ color: addPoolErrors.resume ? '#EF4444' : '#6B7280' }}>
+                  {resumeFile ? `${resumeFile.name} (${(resumeFile.size / 1024).toFixed(0)} KB)` : addPoolErrors.resume || 'Upload candidate resume'}
+                </Typography>
+              </Box>
+              <Button component="label" variant="outlined" size="small" startIcon={<UploadOutlined />} sx={{ textTransform: 'none', flexShrink: 0 }}>
+                {resumeFile ? 'Change File' : 'Upload Resume'}
+                <input
+                  type="file"
+                  hidden
+                  accept=".pdf,.doc,.docx"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setResumeFile(file);
+                      if (addPoolErrors.resume) setAddPoolErrors({ ...addPoolErrors, resume: '' });
+                    }
+                  }}
+                />
+              </Button>
+            </Box>
             <TextField
               fullWidth
               multiline
@@ -2133,15 +2256,23 @@ export default function AdminTalentPool() {
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setOpenAddDialog(false)} sx={{ textTransform: 'none', color: '#6B7280' }}>
+          <Button
+            onClick={() => {
+              setOpenAddDialog(false);
+              setAddPoolErrors({});
+              setResumeFile(null);
+            }}
+            sx={{ textTransform: 'none', color: '#6B7280' }}
+          >
             Cancel
           </Button>
           <Button
             variant="contained"
+            disabled={submitting}
             onClick={handleAddCandidate}
             sx={{ bgcolor: '#530EF0', textTransform: 'none', fontWeight: 600, '&:hover': { bgcolor: '#430bc2' } }}
           >
-            Add to Pool
+            {submitting ? 'Saving...' : 'Add to Pool'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -2291,6 +2422,13 @@ export default function AdminTalentPool() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Full Screen Resume Viewer */}
+      <FullScreenResumeDialog
+        open={resumeViewerOpen}
+        onClose={() => setResumeViewerOpen(false)}
+        candidate={selectedCandidate}
+      />
 
       {/* Snackbar feedback */}
       <Snackbar

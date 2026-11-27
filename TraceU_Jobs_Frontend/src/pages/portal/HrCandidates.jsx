@@ -31,6 +31,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
+import FullScreenResumeDialog from 'components/FullScreenResumeDialog';
 
 // icons
 import PlusOutlined from '@ant-design/icons/PlusOutlined';
@@ -124,6 +125,7 @@ export default function HrCandidates() {
   // Modals
   const [openNewDialog, setOpenNewDialog] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [resumeViewerCandidate, setResumeViewerCandidate] = useState(null);
   const [newCand, setNewCand] = useState({ name: '', email: '', role: '', exp: '', skills: '' });
   const [newCandErrors, setNewCandErrors] = useState({});
 
@@ -844,7 +846,7 @@ export default function HrCandidates() {
                   size="small"
                   variant="contained"
                   startIcon={<EyeOutlined />}
-                  onClick={() => setDrawerTab(1)}
+                  onClick={() => setResumeViewerCandidate(selectedCand)}
                   sx={{ bgcolor: '#530EF0', color: '#FFF', fontWeight: 700, textTransform: 'none', borderRadius: '8px', fontSize: 12, flex: 1, '&:hover': { bgcolor: '#430BC2' } }}
                 >
                   View Resume
@@ -1002,7 +1004,7 @@ export default function HrCandidates() {
                         size="small"
                         variant="outlined"
                         startIcon={<EyeOutlined />}
-                        onClick={() => setSnackbar({ open: true, message: `Opening preview for ${selectedCand.name}'s resume...`, severity: 'info' })}
+                        onClick={() => setResumeViewerCandidate(selectedCand)}
                         sx={{ borderColor: '#E5E7EB', color: '#374151', fontWeight: 600, fontSize: 12, textTransform: 'none', borderRadius: '8px' }}
                       >
                         Preview
@@ -1213,6 +1215,12 @@ export default function HrCandidates() {
       </Dialog>
 
       {/* Toast Notification */}
+      <FullScreenResumeDialog
+        open={Boolean(resumeViewerCandidate)}
+        onClose={() => setResumeViewerCandidate(null)}
+        candidate={resumeViewerCandidate}
+      />
+
       <Snackbar
         open={snackbar.open}
         autoHideDuration={3000}

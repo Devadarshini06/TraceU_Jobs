@@ -37,6 +37,7 @@ import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
 import Popover from '@mui/material/Popover';
+import FullScreenResumeDialog from 'components/FullScreenResumeDialog';
 
 // project imports
 import {
@@ -417,6 +418,7 @@ export default function AdminCandidates() {
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [menuTarget, setMenuTarget] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [resumeViewerCandidate, setResumeViewerCandidate] = useState(null);
 
   // form state (all columns from 1st image)
   const [newName, setNewName] = useState('');
@@ -1733,16 +1735,27 @@ export default function AdminCandidates() {
 
                 {/* Resume Download Card */}
                 <Box sx={{ p: 1.5, borderRadius: '12px', bgcolor: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Stack direction="row" spacing={1.25} alignItems="center">
+                  <Stack direction="row" spacing={1.25} alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => setResumeViewerCandidate(selectedCand)}>
                     <FilePdfOutlined style={{ fontSize: 24, color: '#dc2626' }} />
                     <Box>
-                      <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827' }}>{selectedCand.resumeName}</Typography>
+                      <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827', '&:hover': { color: '#6929e2', textDecoration: 'underline' } }}>{selectedCand.resumeName}</Typography>
                       <Typography sx={{ fontSize: 11, color: '#64748b' }}>{selectedCand.resumeSize} • Uploaded {selectedCand.addedOn}</Typography>
                     </Box>
                   </Stack>
                   <Stack direction="row" spacing={0.5}>
-                    <Button size="small" onClick={() => setSnackbar({ open: true, message: `Viewing verified resume for ${selectedCand.name}`, severity: 'info' })} sx={{ textTransform: 'none', fontWeight: 700, color: '#6929e2' }}>View</Button>
-                    <IconButton size="small" onClick={() => setSnackbar({ open: true, message: `Downloading ${selectedCand.resumeName}...`, severity: 'success' })} sx={{ color: '#6929e2' }}><DownloadOutlined style={{ fontSize: 14 }} /></IconButton>
+                    <Button size="small" onClick={() => setResumeViewerCandidate(selectedCand)} sx={{ textTransform: 'none', fontWeight: 700, color: '#6929e2' }}>View</Button>
+                    <IconButton
+                      size="small"
+                      component={selectedCand.resumeUrl ? 'a' : 'button'}
+                      href={selectedCand.resumeUrl || undefined}
+                      download={selectedCand.resumeUrl ? selectedCand.resumeName : undefined}
+                      onClick={() => {
+                        if (!selectedCand.resumeUrl) setResumeViewerCandidate(selectedCand);
+                      }}
+                      sx={{ color: '#6929e2' }}
+                    >
+                      <DownloadOutlined style={{ fontSize: 14 }} />
+                    </IconButton>
                   </Stack>
                 </Box>
               </Box>
@@ -2003,19 +2016,31 @@ export default function AdminCandidates() {
                             {fullProfileCand.resumeName ? `${fullProfileCand.resumeName} (${fullProfileCand.resumeSize})` : 'No resume uploaded yet'}
                           </Typography>
                         </Box>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={<UploadOutlined />}
-                          onClick={() => {
-                            setUploadTargetId(fullProfileCand.dbId);
-                            setUploadFile(null);
-                            setUploadDialogOpen(true);
-                          }}
-                          sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
-                        >
-                          {fullProfileCand.resumeName ? 'Replace Resume' : 'Upload Resume'}
-                        </Button>
+                        <Stack direction="row" spacing={1}>
+                          {fullProfileCand.resumeName && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              onClick={() => setResumeViewerCandidate(fullProfileCand)}
+                              sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+                            >
+                              View Resume
+                            </Button>
+                          )}
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<UploadOutlined />}
+                            onClick={() => {
+                              setUploadTargetId(fullProfileCand.dbId);
+                              setUploadFile(null);
+                              setUploadDialogOpen(true);
+                            }}
+                            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+                          >
+                            {fullProfileCand.resumeName ? 'Replace Resume' : 'Upload Resume'}
+                          </Button>
+                        </Stack>
                       </Stack>
                     </Card>
                   </Stack>
@@ -2454,6 +2479,12 @@ export default function AdminCandidates() {
       </Dialog>
 
       {/* Snackbar */}
+      <FullScreenResumeDialog
+        open={Boolean(resumeViewerCandidate)}
+        onClose={() => setResumeViewerCandidate(null)}
+        candidate={resumeViewerCandidate}
+      />
+
       <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
         <Alert onClose={() => setSnackbar({ ...snackbar, open: false })} severity={snackbar.severity} sx={{ borderRadius: '10px', fontWeight: 600 }}>
           {snackbar.message}

@@ -31,6 +31,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
+import FullScreenResumeDialog from 'components/FullScreenResumeDialog';
 
 // icons
 import ExportOutlined from '@ant-design/icons/ExportOutlined';
@@ -126,6 +127,7 @@ export default function HrApplications() {
 
   // Toast
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [resumeViewerCandidate, setResumeViewerCandidate] = useState(null);
 
   // 10 Applications list matching screenshot exactly
   const [applications, setApplications] = useState([
@@ -810,7 +812,7 @@ export default function HrApplications() {
                         size="small"
                         variant="outlined"
                         startIcon={<EyeOutlined />}
-                        onClick={() => setDrawerTab(1)}
+                        onClick={() => setResumeViewerCandidate(selectedApp)}
                         sx={{ borderColor: '#530EF0', color: '#530EF0', textTransform: 'none', borderRadius: '8px', fontSize: 11.5 }}
                       >
                         View Resume
@@ -988,6 +990,12 @@ export default function HrApplications() {
       </Box>
 
       {/* Toast Notification */}
+      <FullScreenResumeDialog
+        open={Boolean(resumeViewerCandidate)}
+        onClose={() => setResumeViewerCandidate(null)}
+        candidate={resumeViewerCandidate}
+      />
+
       <Snackbar
         open={snackbar.open}
         autoHideDuration={3000}

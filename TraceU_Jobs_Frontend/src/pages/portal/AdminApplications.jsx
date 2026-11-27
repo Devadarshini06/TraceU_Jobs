@@ -36,6 +36,7 @@ import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
 import Popover from '@mui/material/Popover';
+import FullScreenResumeDialog from 'components/FullScreenResumeDialog';
 
 // project imports
 import {
@@ -367,6 +368,7 @@ export default function AdminApplications() {
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [menuTarget, setMenuTarget] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [resumeViewerCandidate, setResumeViewerCandidate] = useState(null);
 
   // form state
   const [newCandidateName, setNewCandidateName] = useState('');
@@ -1266,7 +1268,16 @@ export default function AdminApplications() {
                           </Typography>
                         </TableCell>
                         <TableCell sx={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
-                          <Stack direction="row" spacing={0.5} alignItems="center">
+                          <Stack
+                            direction="row"
+                            spacing={0.5}
+                            alignItems="center"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setResumeViewerCandidate(app);
+                            }}
+                            sx={{ cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }}
+                          >
                             <FilePdfOutlined style={{ color: '#dc2626', fontSize: 13 }} />
                             <Typography sx={{ fontSize: 11.5, color: '#2563eb', fontWeight: 600 }}>
                               {app.resumeName}
@@ -1517,16 +1528,27 @@ export default function AdminApplications() {
 
                 {/* Resume Download Card */}
                 <Box sx={{ p: 1.5, borderRadius: '12px', bgcolor: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Stack direction="row" spacing={1.25} alignItems="center">
+                  <Stack direction="row" spacing={1.25} alignItems="center" sx={{ cursor: 'pointer' }} onClick={() => setResumeViewerCandidate(selectedApp)}>
                     <FilePdfOutlined style={{ fontSize: 24, color: '#dc2626' }} />
                     <Box>
-                      <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827' }}>{selectedApp.resumeName}</Typography>
+                      <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827', '&:hover': { color: '#6929e2', textDecoration: 'underline' } }}>{selectedApp.resumeName}</Typography>
                       <Typography sx={{ fontSize: 11, color: '#64748b' }}>{selectedApp.resumeSize} • Uploaded {selectedApp.appliedOn}</Typography>
                     </Box>
                   </Stack>
                   <Stack direction="row" spacing={0.5}>
-                    <Button size="small" onClick={() => setSnackbar({ open: true, message: `Viewing verified resume for ${selectedApp.name}`, severity: 'info' })} sx={{ textTransform: 'none', fontWeight: 700, color: '#6929e2' }}>View</Button>
-                    <IconButton size="small" onClick={() => setSnackbar({ open: true, message: `Downloading ${selectedApp.resumeName}...`, severity: 'success' })} sx={{ color: '#6929e2' }}><DownloadOutlined style={{ fontSize: 14 }} /></IconButton>
+                    <Button size="small" onClick={() => setResumeViewerCandidate(selectedApp)} sx={{ textTransform: 'none', fontWeight: 700, color: '#6929e2' }}>View</Button>
+                    <IconButton
+                      size="small"
+                      component={selectedApp.resumeUrl ? 'a' : 'button'}
+                      href={selectedApp.resumeUrl || undefined}
+                      download={selectedApp.resumeUrl ? selectedApp.resumeName : undefined}
+                      onClick={() => {
+                        if (!selectedApp.resumeUrl) setResumeViewerCandidate(selectedApp);
+                      }}
+                      sx={{ color: '#6929e2' }}
+                    >
+                      <DownloadOutlined style={{ fontSize: 14 }} />
+                    </IconButton>
                   </Stack>
                 </Box>
               </Box>
@@ -2163,14 +2185,11 @@ export default function AdminApplications() {
                           </Typography>
                         </Box>
                         <Stack direction="row" spacing={1}>
-                          {fullScreenApp.resumeUrl && (
+                          {fullScreenApp.resumeName && (
                             <Button
                               variant="outlined"
                               size="small"
-                              component="a"
-                              href={fullScreenApp.resumeUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              onClick={() => setResumeViewerCandidate(fullScreenApp)}
                               sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
                             >
                               View Resume
@@ -2201,6 +2220,12 @@ export default function AdminApplications() {
       </Dialog>
 
       {/* Snackbar */}
+      <FullScreenResumeDialog
+        open={Boolean(resumeViewerCandidate)}
+        onClose={() => setResumeViewerCandidate(null)}
+        candidate={resumeViewerCandidate}
+      />
+
       <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
         <Alert onClose={() => setSnackbar({ ...snackbar, open: false })} severity={snackbar.severity} sx={{ borderRadius: '10px', fontWeight: 600 }}>
           {snackbar.message}
