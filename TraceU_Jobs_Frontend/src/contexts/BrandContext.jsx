@@ -63,6 +63,18 @@ export function BrandProvider({ children }) {
     }
   }, [syncBrand]);
 
+  useEffect(() => {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+    fetch(`${baseUrl}/api/v1/brand`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (payload?.success && payload?.data) {
+          syncBrand(payload.data);
+        }
+      })
+      .catch(() => {});
+  }, [syncBrand]);
+
   const resetBrand = useCallback(() => {
     setBrand(DEFAULT_BRAND);
     try {

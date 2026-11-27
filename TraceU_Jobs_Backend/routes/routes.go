@@ -21,6 +21,7 @@ func SetupRoutes(app *fiber.App) {
 	employees.Delete("/:id", controllers.DeleteEmployee)    // DELETE /api/v1/employees/:id (Delete)
 
 	// Admin authentication & access (public)
+	api.Get("/brand", controllers.GetPublicBrand)
 	api.Post("/admin/login", controllers.AdminLogin)
 	api.Post("/admin/oauth/:provider", controllers.AdminOAuthLogin)
 	api.Post("/admin/forgot-password", controllers.AdminForgotPassword)

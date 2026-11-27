@@ -3667,3 +3667,29 @@ func DeleteWorkspaceUser(c *fiber.Ctx) error {
 	})
 }
 
+// GetPublicBrand returns saved branding & appearance settings for the portal.
+func GetPublicBrand(c *fiber.Ctx) error {
+	var row domain.WorkspaceSetting
+	if err := database.DB.Where("setting_key = ?", "branding").First(&row).Error; err != nil || !json.Valid([]byte(row.Payload)) {
+		return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+			Success: true,
+			Message: "Default brand settings",
+			Data: fiber.Map{
+				"companyName":    "TraceU Technologies",
+				"companyLogo":    nil,
+				"primaryColor":   "#530EF0",
+				"secondaryColor": "#F3EBFF",
+				"accentColor":    "#10B981",
+				"themeMode":      "light",
+				"favicon":        nil,
+			},
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Brand settings retrieved successfully",
+		Data:    json.RawMessage(row.Payload),
+	})
+}
+

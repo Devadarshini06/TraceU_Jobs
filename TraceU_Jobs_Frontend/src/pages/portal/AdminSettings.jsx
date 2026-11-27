@@ -149,26 +149,53 @@ export default function AdminSettings() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const dataUrl = event.target?.result;
       setCompanyLogoState(dataUrl);
       updateBrand({ companyLogo: dataUrl });
-      setSnackbar({ open: true, message: 'Company logo uploaded and updated successfully!', severity: 'success' });
+      await saveSettingsSection('branding', {
+        companyName,
+        companyLogo: dataUrl,
+        primaryColor,
+        secondaryColor,
+        accentColor,
+        themeMode,
+        favicon
+      }).catch(() => {});
+      setSnackbar({ open: true, message: 'Company logo uploaded and saved successfully!', severity: 'success' });
     };
     reader.readAsDataURL(file);
   };
 
-  const handleSelectPresetLogo = (preset) => {
+  const handleSelectPresetLogo = async (preset) => {
     setCompanyLogoState(preset.dataUri);
     setPrimaryColor(preset.primaryColor);
     updateBrand({ companyLogo: preset.dataUri, primaryColor: preset.primaryColor });
+    await saveSettingsSection('branding', {
+      companyName,
+      companyLogo: preset.dataUri,
+      primaryColor: preset.primaryColor,
+      secondaryColor,
+      accentColor,
+      themeMode,
+      favicon
+    }).catch(() => {});
     setSnackbar({ open: true, message: `Applied ${preset.name} brand logo & theme!`, severity: 'success' });
   };
 
-  const handleRemoveLogo = () => {
+  const handleRemoveLogo = async () => {
     setCompanyLogoState(null);
     updateBrand({ companyLogo: null });
     if (logoInputRef.current) logoInputRef.current.value = '';
+    await saveSettingsSection('branding', {
+      companyName,
+      companyLogo: null,
+      primaryColor,
+      secondaryColor,
+      accentColor,
+      themeMode,
+      favicon
+    }).catch(() => {});
     setSnackbar({ open: true, message: 'Custom logo removed, reverted to default monogram icon', severity: 'info' });
   };
 
@@ -176,11 +203,20 @@ export default function AdminSettings() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const dataUrl = event.target?.result;
       setFaviconState(dataUrl);
       updateBrand({ favicon: dataUrl });
-      setSnackbar({ open: true, message: 'Favicon updated successfully!', severity: 'success' });
+      await saveSettingsSection('branding', {
+        companyName,
+        companyLogo,
+        primaryColor,
+        secondaryColor,
+        accentColor,
+        themeMode,
+        favicon: dataUrl
+      }).catch(() => {});
+      setSnackbar({ open: true, message: 'Favicon updated and saved successfully!', severity: 'success' });
     };
     reader.readAsDataURL(file);
   };
@@ -426,6 +462,7 @@ Best regards,
         if (b.secondaryColor) setSecondaryColor(b.secondaryColor);
         if (b.accentColor) setAccentColor(b.accentColor);
         if (b.themeMode) setThemeModeState(b.themeMode);
+        if (b.favicon !== undefined) setFaviconState(b.favicon);
         updateBrand(b);
       }
       if (Array.isArray(data.users) && data.users.length > 0) {
@@ -475,7 +512,8 @@ Best regards,
           primaryColor,
           secondaryColor,
           accentColor,
-          themeMode
+          themeMode,
+          favicon
         };
         await saveSettingsSection('branding', brandingPayload);
         updateBrand(brandingPayload);
