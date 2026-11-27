@@ -149,8 +149,11 @@ type CreateCandidateRequest struct {
 	Skills      string `json:"skills"`
 	Location    string `json:"location"`
 	Source      string `json:"source"`
-	Status      string `json:"status"`
-	GithubURL   string `json:"github_url"`
+	Status       string `json:"status"`
+	Availability string `json:"availability"`
+	Salary       string `json:"salary"`
+	About        string `json:"about"`
+	GithubURL    string `json:"github_url"`
 	LinkedInURL string `json:"linkedin_url"`
 	PhotoURL    string `json:"photo_url"`
 }

@@ -70,4 +70,13 @@ func SetupRoutes(app *fiber.App) {
 
 	admin.Get("/interviews", controllers.GetInterviews)
 	admin.Post("/interviews", controllers.CreateInterview)
+
+	admin.Get("/talent-pool", controllers.GetTalentPool)
+	admin.Post("/talent-pool", controllers.AddToTalentPool)
+	admin.Post("/talent-pool/import", controllers.ImportTalentPool)
+	admin.Patch("/talent-pool/:id/availability", controllers.UpdateTalentPoolAvailability)
+	admin.Get("/talent-pool/:id/notes", controllers.GetTalentPoolNotes)
+	admin.Post("/talent-pool/:id/notes", controllers.AddTalentPoolNote)
+	admin.Post("/talent-pool/:id/contact", controllers.ContactTalentPoolCandidate)
+	admin.Delete("/talent-pool/:id", controllers.RemoveFromTalentPool)
 }

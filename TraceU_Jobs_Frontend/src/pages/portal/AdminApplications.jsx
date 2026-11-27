@@ -47,6 +47,7 @@ import {
   scheduleInterview
 } from 'api/adminApplications';
 import { getJobs } from 'api/adminJobs';
+import { updateCandidateStatus } from 'api/adminCandidates';
 import { validateEmail } from 'utils/emailValidation';
 
 // icons
@@ -72,6 +73,7 @@ import FileTextOutlined from '@ant-design/icons/FileTextOutlined';
 import CheckOutlined from '@ant-design/icons/CheckOutlined';
 import CloseOutlined from '@ant-design/icons/CloseOutlined';
 import RightOutlined from '@ant-design/icons/RightOutlined';
+import FullscreenOutlined from '@ant-design/icons/FullscreenOutlined';
 
 // avatar assets
 import avatar1 from 'assets/images/users/avatar-1.png';
@@ -340,6 +342,9 @@ export default function AdminApplications() {
   // delete confirmation
   const [deleteConfirmApp, setDeleteConfirmApp] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  // full-screen view application
+  const [fullScreenApp, setFullScreenApp] = useState(null);
 
   // sort & more filters
   const [sortBy, setSortBy] = useState('recent');
@@ -1335,6 +1340,11 @@ export default function AdminApplications() {
                     </Typography>
                   </Box>
                   <Stack direction="row" spacing={0.5} alignItems="center">
+                    <Tooltip title="View Full Screen">
+                      <IconButton size="small" onClick={() => setFullScreenApp(selectedApp)} sx={{ color: '#6929e2' }}>
+                        <FullscreenOutlined style={{ fontSize: 14 }} />
+                      </IconButton>
+                    </Tooltip>
                     <IconButton size="small" onClick={(e) => { setMenuAnchor(e.currentTarget); setMenuTarget(selectedApp); }}>
                       <MoreOutlined style={{ color: '#9ca3af' }} />
                     </IconButton>
@@ -1366,8 +1376,14 @@ export default function AdminApplications() {
                     variant="contained"
                     size="small"
                     onClick={() => {
-                      setApplications(applications.map((a) => (a.id === selectedApp.id ? { ...a, stage: 'Interview' } : a)));
-                      setSnackbar({ open: true, message: `${selectedApp.name} moved to Interview stage!`, severity: 'success' });
+                      const stageOrder = {
+                        Applied: { next: 'screening', label: 'Screening' },
+                        Screening: { next: 'shortlisted', label: 'Shortlisted' },
+                        Shortlisted: { next: 'interview', label: 'Interview' },
+                        Interview: { next: 'offered', label: 'Offer' }
+                      };
+                      const step = stageOrder[selectedApp.stage] || { next: 'interview', label: 'Interview' };
+                      handleStageUpdate(selectedApp, step.next, `${selectedApp.name} moved to ${step.label} stage!`, 'success');
                     }}
                     sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 500, fontSize: 11, borderRadius: '8px', px: 1.5, '&:hover': { bgcolor: '#5b1fd9' } }}
                   >
@@ -1377,7 +1393,12 @@ export default function AdminApplications() {
                     variant="outlined"
                     size="small"
                     startIcon={<CalendarOutlined />}
-                    onClick={() => setSnackbar({ open: true, message: `Interview scheduled with ${selectedApp.name}!`, severity: 'info' })}
+                    onClick={() => {
+                      setInterviewTargetApp(selectedApp);
+                      setInterviewDate('');
+                      setInterviewNotes('');
+                      setInterviewDialogOpen(true);
+                    }}
                     sx={{ color: '#4b5563', borderColor: '#d1d5db', textTransform: 'none', fontWeight: 500, fontSize: 11, borderRadius: '8px', '&:hover': { borderColor: '#6929e2', color: '#6929e2' } }}
                   >
                     Schedule Interview
@@ -1385,7 +1406,15 @@ export default function AdminApplications() {
                   <Button
                     variant="outlined"
                     size="small"
-                    onClick={() => setSnackbar({ open: true, message: `${selectedApp.name} saved to Talent Pool!`, severity: 'success' })}
+                    onClick={async () => {
+                      if (!selectedApp?.candidateId) return;
+                      try {
+                        await updateCandidateStatus(selectedApp.candidateId, { inTalentPool: true });
+                        setSnackbar({ open: true, message: `${selectedApp.name} saved to Talent Pool!`, severity: 'success' });
+                      } catch (err) {
+                        setSnackbar({ open: true, message: err.message || 'Failed to add to Talent Pool', severity: 'error' });
+                      }
+                    }}
                     sx={{ color: '#6929e2', borderColor: '#ddd6fe', textTransform: 'none', fontWeight: 500, fontSize: 11, borderRadius: '8px', '&:hover': { bgcolor: '#faf5ff', borderColor: '#6929e2' } }}
                   >
                     Add to Pool
@@ -1508,7 +1537,18 @@ export default function AdminApplications() {
 
       {/* Row Menu (•••) */}
       <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={() => setMenuAnchor(null)}>
-        <MenuItem onClick={() => { setMenuAnchor(null); if (menuTarget) setSelectedApp(menuTarget); }}>View Application</MenuItem>
+        <MenuItem
+          onClick={() => {
+            const t = menuTarget;
+            setMenuAnchor(null);
+            if (t) {
+              setSelectedApp(t);
+              setFullScreenApp(t);
+            }
+          }}
+        >
+          View Application
+        </MenuItem>
         <MenuItem
           onClick={() => {
             const t = menuTarget;
@@ -1928,6 +1968,236 @@ export default function AdminApplications() {
             {deleting ? 'Deleting...' : 'Delete'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      {/* Full-Screen Application View Dialog */}
+      <Dialog
+        fullScreen
+        open={Boolean(fullScreenApp)}
+        onClose={() => setFullScreenApp(null)}
+        PaperProps={{ sx: { bgcolor: '#f8fafc' } }}
+      >
+        {fullScreenApp && (
+          <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+            {/* Top Bar */}
+            <Box
+              sx={{
+                px: { xs: 2, sm: 4 },
+                py: 2,
+                bgcolor: '#ffffff',
+                borderBottom: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 2
+              }}
+            >
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Avatar src={fullScreenApp.avatar} sx={{ width: 56, height: 56, border: '2px solid #ede9fe' }} />
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                    <Typography sx={{ fontWeight: 800, fontSize: 20, color: '#111827' }}>{fullScreenApp.name}</Typography>
+                    {getStageChip(fullScreenApp.stage)}
+                    <Chip
+                      label={fullScreenApp.matchScore > 0 ? `${fullScreenApp.matchScore}% ATS Match` : 'Pending Resume'}
+                      size="small"
+                      sx={{
+                        bgcolor: fullScreenApp.matchScore > 0 ? '#ecfdf5' : '#f1f5f9',
+                        color: fullScreenApp.matchScore > 0 ? '#059669' : '#64748b',
+                        fontWeight: 700,
+                        fontSize: 11
+                      }}
+                    />
+                  </Stack>
+                  <Typography sx={{ fontSize: 13.5, color: '#4b5563', fontWeight: 600 }}>
+                    Applied for {fullScreenApp.role} ({fullScreenApp.jobCode}) • {fullScreenApp.dept} • {fullScreenApp.exp}
+                  </Typography>
+                </Box>
+              </Stack>
+
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={async () => {
+                    await handleStageUpdate(fullScreenApp, 'shortlisted', `${fullScreenApp.name} moved to Shortlisted!`, 'success');
+                    setFullScreenApp((prev) => (prev ? { ...prev, stage: 'Shortlisted' } : null));
+                  }}
+                  sx={{ bgcolor: '#059669', textTransform: 'none', fontWeight: 700, borderRadius: '8px', '&:hover': { bgcolor: '#047857' } }}
+                >
+                  Move to Shortlisted
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<CalendarOutlined />}
+                  onClick={() => {
+                    setInterviewTargetApp(fullScreenApp);
+                    setInterviewDate('');
+                    setInterviewNotes('');
+                    setInterviewDialogOpen(true);
+                  }}
+                  sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px', borderColor: '#ddd6fe', color: '#6929e2' }}
+                >
+                  Schedule Interview
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={async () => {
+                    await handleStageUpdate(fullScreenApp, 'offered', `Offer sent to ${fullScreenApp.name}!`, 'success');
+                    setFullScreenApp((prev) => (prev ? { ...prev, stage: 'Offer' } : null));
+                  }}
+                  sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+                >
+                  Send Offer
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color="error"
+                  onClick={async () => {
+                    await handleStageUpdate(fullScreenApp, 'rejected', `Application for ${fullScreenApp.name} rejected.`, 'error');
+                    setFullScreenApp((prev) => (prev ? { ...prev, stage: 'Rejected' } : null));
+                  }}
+                  sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+                >
+                  Reject
+                </Button>
+                <IconButton onClick={() => setFullScreenApp(null)} sx={{ ml: 1, bgcolor: '#f1f5f9' }}>
+                  <CloseOutlined style={{ fontSize: 16 }} />
+                </IconButton>
+              </Stack>
+            </Box>
+
+            {/* Full-Screen Body */}
+            <Box sx={{ p: { xs: 2, sm: 4 }, maxWidth: 1200, width: '100%', mx: 'auto' }}>
+              <Grid container spacing={3}>
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <Card sx={{ p: 3, borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                    <Typography sx={{ fontWeight: 800, fontSize: 15, color: '#111827', mb: 2 }}>Applicant Details</Typography>
+                    <Stack spacing={1.5}>
+                      <Box>
+                        <Typography sx={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Email Address</Typography>
+                        <Typography sx={{ fontSize: 13.5, fontWeight: 600, color: '#2563eb' }}>{fullScreenApp.email}</Typography>
+                      </Box>
+                      <Box>
+                        <Typography sx={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Phone Number</Typography>
+                        <Typography sx={{ fontSize: 13.5, fontWeight: 600, color: '#111827' }}>{fullScreenApp.phone}</Typography>
+                      </Box>
+                      <Divider />
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography sx={{ fontSize: 12, color: '#64748b' }}>Location</Typography>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827' }}>{fullScreenApp.location}</Typography>
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography sx={{ fontSize: 12, color: '#64748b' }}>Experience</Typography>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827' }}>{fullScreenApp.exp}</Typography>
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography sx={{ fontSize: 12, color: '#64748b' }}>Applied On</Typography>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827' }}>{fullScreenApp.appliedOn}</Typography>
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography sx={{ fontSize: 12, color: '#64748b' }}>Application ID</Typography>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#111827' }}>{fullScreenApp.id}</Typography>
+                      </Stack>
+                    </Stack>
+                  </Card>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 8 }}>
+                  <Stack spacing={3}>
+                    <Card sx={{ p: 3, borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                      <Typography sx={{ fontWeight: 800, fontSize: 15, color: '#111827', mb: 2 }}>ATS Match Analysis</Typography>
+                      <Stack direction="row" spacing={3} alignItems="center" sx={{ mb: 2.5 }}>
+                        <Box
+                          sx={{
+                            width: 84,
+                            height: 84,
+                            borderRadius: '50%',
+                            border: `6px solid ${fullScreenApp.matchScore >= 75 ? '#10b981' : fullScreenApp.matchScore > 0 ? '#f59e0b' : '#cbd5e1'}`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 800,
+                            fontSize: 20,
+                            color: '#111827',
+                            bgcolor: '#f8fafc',
+                            flexShrink: 0
+                          }}
+                        >
+                          {fullScreenApp.matchScore > 0 ? `${fullScreenApp.matchScore}%` : 'N/A'}
+                        </Box>
+                        <Box>
+                          <Typography sx={{ fontWeight: 800, fontSize: 15, color: '#111827' }}>
+                            {fullScreenApp.matchScore >= 80
+                              ? 'Excellent Match'
+                              : fullScreenApp.matchScore >= 60
+                              ? 'Good Match'
+                              : fullScreenApp.matchScore > 0
+                              ? 'Needs Review'
+                              : 'Resume Required for ATS Score'}
+                          </Typography>
+                          <Typography sx={{ fontSize: 13, color: '#64748b', mt: 0.5 }}>
+                            Calculated from candidate skills, experience, and job requirements.
+                          </Typography>
+                        </Box>
+                      </Stack>
+
+                      <Typography sx={{ fontWeight: 700, fontSize: 13, color: '#111827', mb: 1 }}>Skills</Typography>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        {fullScreenApp.matchedSkills.map((skill) => (
+                          <Chip key={skill} label={skill} sx={{ bgcolor: '#f3edff', color: '#530EF0', fontWeight: 700, fontSize: 12 }} />
+                        ))}
+                      </Stack>
+                    </Card>
+
+                    <Card sx={{ p: 3, borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={2}>
+                        <Box>
+                          <Typography sx={{ fontWeight: 800, fontSize: 15, color: '#111827' }}>Resume</Typography>
+                          <Typography sx={{ fontSize: 13, color: '#64748b', mt: 0.5 }}>
+                            {fullScreenApp.resumeName ? `${fullScreenApp.resumeName} (${fullScreenApp.resumeSize})` : 'No resume uploaded yet'}
+                          </Typography>
+                        </Box>
+                        <Stack direction="row" spacing={1}>
+                          {fullScreenApp.resumeUrl && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              component="a"
+                              href={fullScreenApp.resumeUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px' }}
+                            >
+                              View Resume
+                            </Button>
+                          )}
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<UploadOutlined />}
+                            onClick={() => {
+                              setUploadTargetAppId(fullScreenApp.dbId);
+                              setUploadFile(null);
+                              setUploadDialogOpen(true);
+                            }}
+                            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: '8px', borderColor: '#ddd6fe', color: '#6929e2' }}
+                          >
+                            {fullScreenApp.resumeName ? 'Replace Resume' : 'Upload Resume'}
+                          </Button>
+                        </Stack>
+                      </Stack>
+                    </Card>
+                  </Stack>
+                </Grid>
+              </Grid>
+            </Box>
+          </Box>
+        )}
       </Dialog>
 
       {/* Snackbar */}

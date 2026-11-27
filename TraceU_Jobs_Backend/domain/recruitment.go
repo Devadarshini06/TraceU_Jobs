@@ -52,6 +52,9 @@ type Candidate struct {
 	Location     string    `gorm:"column:location;size:100;default:Bengaluru;not null" json:"location"`
 	Source       string    `gorm:"column:source;size:60;default:LinkedIn;not null" json:"source"`
 	Status       string    `gorm:"column:status;size:30;default:active;not null" json:"status"`
+	Availability string    `gorm:"column:availability;size:40;default:Active;not null" json:"availability"`
+	Salary       string    `gorm:"column:salary;size:60" json:"salary"`
+	About        string    `gorm:"column:about;type:text" json:"about"`
 	InTalentPool bool      `gorm:"column:in_talent_pool;default:false;not null" json:"in_talent_pool"`
 	GithubURL    string    `gorm:"column:github_url;size:255" json:"github_url"`
 	LinkedInURL  string    `gorm:"column:linkedin_url;size:255" json:"linkedin_url"`

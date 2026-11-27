@@ -2099,3 +2099,425 @@ func ImportCandidates(c *fiber.Ctx) error {
 	})
 }
 
+func normalizeAvailability(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "passive":
+		return "Passive"
+	case "not contacted", "not_contacted":
+		return "Not Contacted"
+	default:
+		return "Active"
+	}
+}
+
+// GetTalentPool returns candidates marked as in_talent_pool = true.
+func GetTalentPool(c *fiber.Ctx) error {
+	var candidates []domain.Candidate
+	query := database.DB.Where("in_talent_pool = ?", true)
+
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where(
+			"LOWER(name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(current_role) LIKE ? OR LOWER(skills) LIKE ? OR LOWER(location) LIKE ?",
+			like, like, like, like, like,
+		)
+	}
+	if skill := strings.TrimSpace(c.Query("skill")); skill != "" && skill != "All" {
+		query = query.Where("LOWER(skills) LIKE ?", "%"+strings.ToLower(skill)+"%")
+	}
+	if loc := strings.TrimSpace(c.Query("location")); loc != "" && loc != "All" {
+		query = query.Where("location = ?", loc)
+	}
+	if avail := strings.TrimSpace(c.Query("availability")); avail != "" && avail != "All" {
+		query = query.Where("availability = ?", normalizeAvailability(avail))
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.Query("sort"))) {
+	case "oldest":
+		query = query.Order("created_at ASC")
+	case "name":
+		query = query.Order("name ASC")
+	default:
+		query = query.Order("created_at DESC")
+	}
+
+	if result := query.Find(&candidates); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to fetch talent pool",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Talent pool retrieved successfully",
+		Data:    candidates,
+	})
+}
+
+// AddToTalentPool adds a new candidate (or promotes an existing one) into the talent pool.
+func AddToTalentPool(c *fiber.Ctx) error {
+	var req model.CreateCandidateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+			Error:   err.Error(),
+		})
+	}
+
+	name := strings.TrimSpace(req.Name)
+	email := strings.TrimSpace(strings.ToLower(req.Email))
+	if name == "" || email == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Full name and email address are required",
+		})
+	}
+	if !isValidEmailAddress(email) {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Please provide a valid email address",
+		})
+	}
+
+	avail := normalizeAvailability(req.Availability)
+	role := strings.TrimSpace(req.CurrentRole)
+	if role == "" {
+		role = "Software Engineer"
+	}
+	exp := strings.TrimSpace(req.Experience)
+	if exp == "" {
+		exp = "2+ yrs"
+	}
+	loc := strings.TrimSpace(req.Location)
+	if loc == "" {
+		loc = "Bengaluru"
+	}
+	source := strings.TrimSpace(req.Source)
+	if source == "" {
+		source = "LinkedIn"
+	}
+	salary := strings.TrimSpace(req.Salary)
+	if salary == "" {
+		salary = "Negotiable"
+	}
+
+	var cand domain.Candidate
+	if err := database.DB.Where("LOWER(email) = ?", email).First(&cand).Error; err == nil {
+		cand.InTalentPool = true
+		cand.Name = name
+		if req.Phone != "" {
+			cand.Phone = strings.TrimSpace(req.Phone)
+		}
+		cand.CurrentRole = role
+		cand.Experience = exp
+		if req.Skills != "" {
+			cand.Skills = strings.TrimSpace(req.Skills)
+		}
+		cand.Location = loc
+		cand.Source = source
+		cand.Availability = avail
+		cand.Salary = salary
+		if req.About != "" {
+			cand.About = strings.TrimSpace(req.About)
+		}
+		database.DB.Save(&cand)
+		return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+			Success: true,
+			Message: "Candidate added to Talent Pool",
+			Data:    cand,
+		})
+	}
+
+	cand = domain.Candidate{
+		Name:         name,
+		Email:        email,
+		Phone:        strings.TrimSpace(req.Phone),
+		CurrentRole:  role,
+		Department:   "Engineering",
+		Experience:   exp,
+		Skills:       strings.TrimSpace(req.Skills),
+		Location:     loc,
+		Source:       source,
+		Status:       "active",
+		Availability: avail,
+		Salary:       salary,
+		About:        strings.TrimSpace(req.About),
+		InTalentPool: true,
+	}
+	if result := database.DB.Create(&cand); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to add candidate to talent pool",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Added to Talent Pool",
+		Description: fmt.Sprintf("%s • %s (%s)", cand.Name, cand.CurrentRole, cand.Source),
+		EntityType:  "talent_pool",
+		EntityID:    cand.ID,
+	})
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: "Candidate added to Talent Pool",
+		Data:    cand,
+	})
+}
+
+// ImportTalentPool bulk-imports candidates directly into the talent pool.
+func ImportTalentPool(c *fiber.Ctx) error {
+	var req model.ImportCandidatesRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid import payload",
+			Error:   err.Error(),
+		})
+	}
+	if len(req.Candidates) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "No candidates provided for import",
+		})
+	}
+
+	createdList := make([]domain.Candidate, 0, len(req.Candidates))
+	skipped := 0
+
+	for _, item := range req.Candidates {
+		name := strings.TrimSpace(item.Name)
+		email := strings.TrimSpace(strings.ToLower(item.Email))
+		if name == "" || !isValidEmailAddress(email) {
+			skipped++
+			continue
+		}
+
+		var existing domain.Candidate
+		if err := database.DB.Where("LOWER(email) = ?", email).First(&existing).Error; err == nil {
+			if !existing.InTalentPool {
+				existing.InTalentPool = true
+				database.DB.Save(&existing)
+				createdList = append(createdList, existing)
+			} else {
+				skipped++
+			}
+			continue
+		}
+
+		role := strings.TrimSpace(item.CurrentRole)
+		if role == "" {
+			role = "Software Engineer"
+		}
+		exp := strings.TrimSpace(item.Experience)
+		if exp == "" {
+			exp = "2+ yrs"
+		}
+		loc := strings.TrimSpace(item.Location)
+		if loc == "" {
+			loc = "Bengaluru"
+		}
+		source := strings.TrimSpace(item.Source)
+		if source == "" {
+			source = "Import"
+		}
+
+		cand := domain.Candidate{
+			Name:         name,
+			Email:        email,
+			Phone:        strings.TrimSpace(item.Phone),
+			CurrentRole:  role,
+			Department:   "Engineering",
+			Experience:   exp,
+			Skills:       strings.TrimSpace(item.Skills),
+			Location:     loc,
+			Source:       source,
+			Status:       "active",
+			Availability: normalizeAvailability(item.Availability),
+			InTalentPool: true,
+		}
+		if err := database.DB.Create(&cand).Error; err != nil {
+			skipped++
+			continue
+		}
+		createdList = append(createdList, cand)
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Imported %d talent pool candidates (%d skipped)", len(createdList), skipped),
+		Data: fiber.Map{
+			"imported_count": len(createdList),
+			"skipped_count":  skipped,
+			"candidates":     createdList,
+		},
+	})
+}
+
+// UpdateTalentPoolAvailability updates a candidate's availability in the talent pool.
+func UpdateTalentPoolAvailability(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid candidate ID",
+		})
+	}
+
+	var body struct {
+		Availability string `json:"availability"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid payload",
+		})
+	}
+
+	var cand domain.Candidate
+	if err := database.DB.First(&cand, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Candidate not found",
+		})
+	}
+
+	cand.Availability = normalizeAvailability(body.Availability)
+	database.DB.Save(&cand)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Availability updated",
+		Data:    cand,
+	})
+}
+
+// GetTalentPoolNotes returns saved evaluation notes for a talent pool candidate.
+func GetTalentPoolNotes(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid candidate ID",
+		})
+	}
+
+	var logs []domain.ActivityLog
+	database.DB.Where("entity_type = ? AND entity_id = ?", "talent_pool_note", id).
+		Order("created_at DESC").Find(&logs)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Notes retrieved successfully",
+		Data:    logs,
+	})
+}
+
+// AddTalentPoolNote records an internal evaluation note for a talent pool candidate.
+func AddTalentPoolNote(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid candidate ID",
+		})
+	}
+
+	var body struct {
+		Note string `json:"note"`
+	}
+	if err := c.BodyParser(&body); err != nil || strings.TrimSpace(body.Note) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Note text is required",
+		})
+	}
+
+	entry := domain.ActivityLog{
+		Title:       "Evaluation Note",
+		Description: strings.TrimSpace(body.Note),
+		EntityType:  "talent_pool_note",
+		EntityID:    uint(id),
+	}
+	if err := database.DB.Create(&entry).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to save note",
+		})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(model.APIResponse{
+		Success: true,
+		Message: "Note added successfully",
+		Data:    entry,
+	})
+}
+
+// ContactTalentPoolCandidate logs an outreach message to a talent pool candidate.
+func ContactTalentPoolCandidate(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid candidate ID",
+		})
+	}
+
+	var cand domain.Candidate
+	if err := database.DB.First(&cand, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Candidate not found",
+		})
+	}
+
+	var body struct {
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+	}
+	_ = c.BodyParser(&body)
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       fmt.Sprintf("Contacted %s", cand.Name),
+		Description: strings.TrimSpace(body.Subject),
+		EntityType:  "talent_pool",
+		EntityID:    cand.ID,
+	})
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Message sent to %s!", cand.Name),
+	})
+}
+
+// RemoveFromTalentPool removes a candidate from the talent pool without deleting their profile.
+func RemoveFromTalentPool(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid candidate ID",
+		})
+	}
+
+	var cand domain.Candidate
+	if err := database.DB.First(&cand, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "Candidate not found",
+		})
+	}
+
+	cand.InTalentPool = false
+	database.DB.Save(&cand)
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: "Removed from Talent Pool",
+	})
+}
+

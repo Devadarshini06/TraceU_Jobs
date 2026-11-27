@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { useNavigate } from 'react-router-dom';
 
 // material-ui
@@ -58,6 +59,20 @@ import ArrowDownOutlined from '@ant-design/icons/ArrowDownOutlined';
 import CalendarOutlined from '@ant-design/icons/CalendarOutlined';
 import DollarOutlined from '@ant-design/icons/DollarOutlined';
 import ThunderboltOutlined from '@ant-design/icons/ThunderboltOutlined';
+import CircularProgress from '@mui/material/CircularProgress';
+import {
+  getTalentPool,
+  addToTalentPool,
+  importTalentPool,
+  updateTalentPoolAvailability,
+  getTalentPoolNotes,
+  addTalentPoolNote,
+  contactTalentPoolCandidate,
+  removeFromTalentPool
+} from 'api/adminTalentPool';
+import { getJobs } from 'api/adminJobs';
+import { createApplication } from 'api/adminApplications';
+import { validateEmail } from 'utils/emailValidation';
 
 // avatar assets
 import avatar1 from 'assets/images/users/avatar-1.png';
@@ -310,11 +325,74 @@ const initialTalentPool = [
   }
 ];
 
+const avatarPool = [avatar1, avatar2, avatar3, avatar4, avatar5];
+
+function mapBackendPoolCandidate(item) {
+  const numericId = Number(item.id || item.ID || 0);
+  const rawAvatar = item.photo_url || item.avatar || '';
+  const avatar =
+    rawAvatar && !String(rawAvatar).startsWith('avatar')
+      ? rawAvatar
+      : avatarPool[numericId % avatarPool.length];
+  const allSkills = Array.isArray(item.skills)
+    ? item.skills
+    : typeof item.skills === 'string' && item.skills.trim()
+      ? item.skills.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+  const roleStr = item.current_role || item.role || 'Candidate';
+  const expStr = item.experience || item.exp || '0-2 yrs';
+  const rawCreatedAt = item.created_at || item.createdAt;
+  const addedOn =
+    item.addedOn ||
+    (rawCreatedAt
+      ? new Date(rawCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'Recently');
+  const resumeUrl = item.resume_url || item.resumeUrl || '';
+  const resumeName =
+    item.resume_name ||
+    item.resumeName ||
+    (resumeUrl ? resumeUrl.split('/').pop() : `${(item.name || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf`);
+
+  return {
+    id: item.id,
+    name: item.name || 'Candidate',
+    email: item.email || '',
+    phone: item.phone || '',
+    role: roleStr,
+    exp: expStr,
+    skills: allSkills.slice(0, 2),
+    extraSkillsCount: Math.max(0, allSkills.length - 2),
+    allSkills,
+    location: item.location || 'Bengaluru',
+    source: item.source || 'Talent Pool',
+    availability: item.availability || 'Active',
+    addedOn,
+    createdAt: rawCreatedAt || new Date().toISOString(),
+    avatar,
+    linkedin: item.linkedin_url || item.linkedin || '',
+    github: item.github_url || item.github || '',
+    salary: item.salary || 'Competitive',
+    about: item.about || `${roleStr} with ${expStr} experience.`,
+    matchScore: item.matchScore ?? 85,
+    education: item.education || { degree: 'B.Tech / B.E.', school: 'University', period: 'Graduated' },
+    experience: {
+      title: roleStr,
+      company: item.source || 'Talent Pool',
+      period: expStr
+    },
+    resumeName,
+    resumeUrl,
+    resumeSize: item.resume_size || item.resumeSize || '1.4 MB'
+  };
+}
+
 export default function AdminTalentPool() {
   const navigate = useNavigate();
 
   // State
-  const [candidates, setCandidates] = useState(initialTalentPool);
+  const [candidates, setCandidates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [activeTab, setActiveTab] = useState(0); // 0: All, 1: Active, 2: Passive, 3: Not Contacted
   const [searchQuery, setSearchQuery] = useState('');
@@ -322,15 +400,18 @@ export default function AdminTalentPool() {
   const [experienceFilter, setExperienceFilter] = useState('All');
   const [locationFilter, setLocationFilter] = useState('All');
   const [availabilityFilter, setAvailabilityFilter] = useState('All');
+  const [sortBy, setSortBy] = useState('Recently Added');
+  const [sortMenuAnchor, setSortMenuAnchor] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [page, setPage] = useState(1);
   const rowsPerPage = 10;
+  const [jobsList, setJobsList] = useState([]);
+  const [parsedImportRows, setParsedImportRows] = useState([]);
+  const [importFileName, setImportFileName] = useState('');
 
   // Detail panel subtab
   const [detailTab, setDetailTab] = useState(0); // 0: Overview, 1: Resume, 2: Activity, 3: Notes
-  const [candidateNotes, setCandidateNotes] = useState({
-    'POOL-001': ['Strong background in modern frontend systems. Ready to transition next month.']
-  });
+  const [candidateNotes, setCandidateNotes] = useState({});
   const [newNoteText, setNewNoteText] = useState('');
 
   // Dialogs
@@ -340,7 +421,7 @@ export default function AdminTalentPool() {
   const [openApplicationDialog, setOpenApplicationDialog] = useState(false);
   const [contactSubject, setContactSubject] = useState('');
   const [contactBody, setContactBody] = useState('');
-  const [selectedJobForApp, setSelectedJobForApp] = useState('Senior Software Engineer (JOB-0012)');
+  const [selectedJobForApp, setSelectedJobForApp] = useState('');
 
   // Menu
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
@@ -365,9 +446,58 @@ export default function AdminTalentPool() {
   });
   const [addPoolErrors, setAddPoolErrors] = useState({});
 
+  const loadTalentPool = async () => {
+    try {
+      setLoading(true);
+      const res = await getTalentPool();
+      const rawList = res?.data?.candidates || res?.candidates || (Array.isArray(res?.data) ? res.data : []);
+      const mapped = rawList.map(mapBackendPoolCandidate);
+      setCandidates(mapped);
+      setSelectedCandidate((prev) => {
+        if (!prev) return null;
+        return mapped.find((c) => c.id === prev.id) || null;
+      });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.message || 'Failed to load talent pool',
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTalentPool();
+    getJobs()
+      .then((res) => {
+        const list = res?.data?.jobs || res?.jobs || (Array.isArray(res?.data) ? res.data : []);
+        setJobsList(list);
+        if (list.length > 0) {
+          setSelectedJobForApp(String(list[0].id));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!selectedCandidate?.id) return;
+    getTalentPoolNotes(selectedCandidate.id)
+      .then((res) => {
+        const rawNotes = res?.data || res?.notes || [];
+        const notes = rawNotes.map((n) => n.description || n.note || n);
+        setCandidateNotes((prev) => ({
+          ...prev,
+          [selectedCandidate.id]: notes
+        }));
+      })
+      .catch(() => {});
+  }, [selectedCandidate?.id]);
+
   // Filter logic
   const filteredCandidates = useMemo(() => {
-    return candidates.filter((item) => {
+    const filtered = candidates.filter((item) => {
       // Tab filter
       if (activeTab === 1 && item.availability !== 'Active') return false;
       if (activeTab === 2 && item.availability !== 'Passive') return false;
@@ -377,7 +507,7 @@ export default function AdminTalentPool() {
       if (availabilityFilter !== 'All' && item.availability !== availabilityFilter) return false;
       if (locationFilter !== 'All' && item.location !== locationFilter) return false;
       if (experienceFilter !== 'All') {
-        if (experienceFilter === '0-2 yrs' && !item.exp.includes('1') && !item.exp.includes('2')) return false;
+        if (experienceFilter === '0-2 yrs' && !item.exp.includes('1') && !item.exp.includes('2') && !item.exp.includes('0')) return false;
         if (experienceFilter === '3-5 yrs' && !item.exp.includes('3') && !item.exp.includes('4') && !item.exp.includes('5')) return false;
       }
       if (skillFilter !== 'All') {
@@ -390,21 +520,34 @@ export default function AdminTalentPool() {
         const q = searchQuery.toLowerCase();
         const matchName = item.name.toLowerCase().includes(q);
         const matchEmail = item.email.toLowerCase().includes(q);
+        const matchPhone = (item.phone || '').toLowerCase().includes(q);
         const matchRole = item.role.toLowerCase().includes(q);
         const matchLoc = item.location.toLowerCase().includes(q);
         const matchSkill = item.allSkills.some((s) => s.toLowerCase().includes(q));
-        if (!matchName && !matchEmail && !matchRole && !matchLoc && !matchSkill) return false;
+        if (!matchName && !matchEmail && !matchPhone && !matchRole && !matchLoc && !matchSkill) return false;
       }
 
       return true;
     });
-  }, [candidates, activeTab, availabilityFilter, locationFilter, experienceFilter, skillFilter, searchQuery]);
+
+    const sorted = [...filtered];
+    if (sortBy === 'Highest Match') {
+      sorted.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
+    } else if (sortBy === 'Name (A-Z)') {
+      sorted.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      sorted.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    }
+    return sorted;
+  }, [candidates, activeTab, availabilityFilter, locationFilter, experienceFilter, skillFilter, searchQuery, sortBy]);
 
   // Counts
-  const totalCount = 482;
-  const highMatchCount = 128;
-  const readyCount = 206;
-  const notContactedCount = 64;
+  const totalCount = candidates.length;
+  const activeCount = candidates.filter((c) => c.availability === 'Active').length;
+  const passiveCount = candidates.filter((c) => c.availability === 'Passive').length;
+  const notContactedCount = candidates.filter((c) => c.availability === 'Not Contacted').length;
+  const highMatchCount = candidates.filter((c) => (c.matchScore || 0) >= 85).length;
+  const readyCount = activeCount;
 
   const handleSelectAll = (e) => {
     if (e.target.checked) {
@@ -457,19 +600,17 @@ export default function AdminTalentPool() {
     setMenuCandidate(null);
   };
 
-  const handleAddCandidate = () => {
+  const handleAddCandidate = async () => {
     const errors = {};
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!newCandidate.name.trim()) {
       errors.name = 'Full Name is required';
-    } else if (newCandidate.name.trim().length < 5) {
-      errors.name = 'Full Name must be at least 5 characters';
+    } else if (newCandidate.name.trim().length < 3) {
+      errors.name = 'Full Name must be at least 3 characters';
     }
 
-    if (!newCandidate.email.trim()) {
-      errors.email = 'Email Address is required';
-    } else if (!emailRegex.test(newCandidate.email.trim())) {
-      errors.email = 'Must be a valid email address';
+    const emailErr = validateEmail(newCandidate.email);
+    if (emailErr) {
+      errors.email = emailErr;
     }
 
     if (Object.keys(errors).length > 0) {
@@ -478,79 +619,280 @@ export default function AdminTalentPool() {
       return;
     }
 
-    const skillList = newCandidate.skills ? newCandidate.skills.split(',').map((s) => s.trim()) : ['React', 'Node.js'];
-    const created = {
-      id: `POOL-0${candidates.length + 1}`,
-      name: newCandidate.name.trim(),
-      email: newCandidate.email.trim(),
-      phone: newCandidate.phone || '+91 98765 00000',
-      avatar: avatar1,
-      role: newCandidate.role || 'Software Engineer',
-      exp: newCandidate.exp,
-      skills: skillList.slice(0, 2),
-      allSkills: skillList,
-      extraSkillsCount: Math.max(0, skillList.length - 2),
-      location: newCandidate.location,
-      prefLocation: `${newCandidate.location} / Remote`,
-      source: newCandidate.source,
-      availability: newCandidate.availability,
-      addedOn: 'Today',
-      about: newCandidate.about || `Qualified professional with experience in ${skillList.join(', ')}.`,
-      salary: newCandidate.salary,
-      matchScore: 90,
-      education: { degree: 'Bachelor Degree', school: 'Recognized University', period: '2018 - 2022' },
-      experience: { title: newCandidate.role || 'Software Engineer', company: 'Previous Firm', period: '2 yrs' },
-      resumeName: `${newCandidate.name.trim().replace(/\s+/g, '_')}_Resume.pdf`,
-      resumeSize: '2.0 MB'
-    };
-    setCandidates([created, ...candidates]);
-    setSelectedCandidate(created);
-    setOpenAddDialog(false);
-    setAddPoolErrors({});
-    setSnackbar({ open: true, message: `${created.name} added to Talent Pool successfully!`, severity: 'success' });
-    setNewCandidate({
-      name: '',
-      email: '',
-      phone: '',
-      role: '',
-      exp: '2+ yrs',
-      skills: '',
-      location: 'Bengaluru',
-      source: 'LinkedIn',
-      availability: 'Active',
-      salary: '₹10 - 14 LPA',
-      about: ''
-    });
+    try {
+      setSubmitting(true);
+      const skillList = newCandidate.skills
+        ? newCandidate.skills.split(',').map((s) => s.trim()).filter(Boolean)
+        : ['React', 'Node.js'];
+      const res = await addToTalentPool({
+        name: newCandidate.name.trim(),
+        email: newCandidate.email.trim(),
+        phone: newCandidate.phone.trim() || '+91 98765 00000',
+        current_role: newCandidate.role.trim() || 'Software Engineer',
+        experience: newCandidate.exp.trim() || '2+ yrs',
+        skills: skillList.join(', '),
+        location: newCandidate.location.trim() || 'Bengaluru',
+        source: newCandidate.source || 'LinkedIn',
+        availability: newCandidate.availability || 'Active',
+        salary: newCandidate.salary || '₹10 - 14 LPA',
+        about: newCandidate.about.trim() || `Qualified professional with experience in ${skillList.join(', ')}.`
+      });
+      const created = mapBackendPoolCandidate(res?.data || res?.candidate || {});
+      setCandidates((prev) => [created, ...prev]);
+      setSelectedCandidate(created);
+      setOpenAddDialog(false);
+      setAddPoolErrors({});
+      setSnackbar({ open: true, message: `${created.name} added to Talent Pool successfully!`, severity: 'success' });
+      setNewCandidate({
+        name: '',
+        email: '',
+        phone: '',
+        role: '',
+        exp: '2+ yrs',
+        skills: '',
+        location: 'Bengaluru',
+        source: 'LinkedIn',
+        availability: 'Active',
+        salary: '₹10 - 14 LPA',
+        about: ''
+      });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to add candidate to Talent Pool',
+        severity: 'error'
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleSendContact = () => {
-    setOpenContactDialog(false);
-    setSnackbar({
-      open: true,
-      message: `Message sent to ${selectedCandidate?.name || 'candidate'} successfully!`,
-      severity: 'success'
-    });
-    setContactSubject('');
-    setContactBody('');
+  const handleSendContact = async () => {
+    const targetIds = selectedIds.length > 0 && !selectedCandidate ? selectedIds : selectedCandidate ? [selectedCandidate.id] : [];
+    if (targetIds.length === 0) return;
+
+    try {
+      setSubmitting(true);
+      await Promise.all(
+        targetIds.map((id) =>
+          contactTalentPoolCandidate(id, {
+            subject: contactSubject.trim() || 'Exciting opportunity at TraceU',
+            body: contactBody.trim() || 'Hi, we reviewed your profile in our talent pool and would love to connect.'
+          })
+        )
+      );
+      await loadTalentPool();
+      setOpenContactDialog(false);
+      setSnackbar({
+        open: true,
+        message:
+          targetIds.length > 1
+            ? `Message sent to ${targetIds.length} candidates!`
+            : `Message sent to ${selectedCandidate?.name || 'candidate'} successfully!`,
+        severity: 'success'
+      });
+      setContactSubject('');
+      setContactBody('');
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to send message',
+        severity: 'error'
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleAddToApplication = () => {
-    setOpenApplicationDialog(false);
-    setSnackbar({
-      open: true,
-      message: `${selectedCandidate?.name} mapped to ${selectedJobForApp}!`,
-      severity: 'success'
-    });
+  const handleAddToApplication = async () => {
+    const targetCandidates =
+      selectedIds.length > 0 && !selectedCandidate
+        ? candidates.filter((c) => selectedIds.includes(c.id))
+        : selectedCandidate
+          ? [selectedCandidate]
+          : [];
+    if (targetCandidates.length === 0) return;
+
+    const chosenJob = jobsList.find((j) => String(j.id) === String(selectedJobForApp));
+    if (!chosenJob) {
+      setSnackbar({ open: true, message: 'Please select a valid job', severity: 'error' });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await Promise.all(
+        targetCandidates.map((cand) =>
+          createApplication({
+            candidateId: cand.id,
+            jobId: chosenJob.id,
+            jobTitle: chosenJob.title,
+            stage: 'Applied'
+          })
+        )
+      );
+      setOpenApplicationDialog(false);
+      setSnackbar({
+        open: true,
+        message:
+          targetCandidates.length > 1
+            ? `${targetCandidates.length} candidates mapped to ${chosenJob.title}!`
+            : `${targetCandidates[0].name} mapped to ${chosenJob.title}!`,
+        severity: 'success'
+      });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to map candidate to job',
+        severity: 'error'
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleAddNote = () => {
+  const handleAddNote = async () => {
     if (!newNoteText.trim() || !selectedCandidate) return;
-    setCandidateNotes((prev) => ({
-      ...prev,
-      [selectedCandidate.id]: [...(prev[selectedCandidate.id] || []), newNoteText.trim()]
-    }));
-    setNewNoteText('');
-    setSnackbar({ open: true, message: 'Note added to candidate profile!', severity: 'success' });
+    const noteText = newNoteText.trim();
+    try {
+      await addTalentPoolNote(selectedCandidate.id, noteText);
+      setCandidateNotes((prev) => ({
+        ...prev,
+        [selectedCandidate.id]: [noteText, ...(prev[selectedCandidate.id] || [])]
+      }));
+      setNewNoteText('');
+      setSnackbar({ open: true, message: 'Note added to candidate profile!', severity: 'success' });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to add note',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleChangeAvailability = async (cand, availability) => {
+    try {
+      await updateTalentPoolAvailability(cand.id, availability);
+      setCandidates((prev) => prev.map((c) => (c.id === cand.id ? { ...c, availability } : c)));
+      if (selectedCandidate?.id === cand.id) {
+        setSelectedCandidate((prev) => (prev ? { ...prev, availability } : prev));
+      }
+      setSnackbar({ open: true, message: `${cand.name} marked as ${availability}`, severity: 'success' });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to update availability',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleRemoveCandidate = async (cand) => {
+    try {
+      await removeFromTalentPool(cand.id);
+      setCandidates((prev) => prev.filter((c) => c.id !== cand.id));
+      if (selectedCandidate?.id === cand.id) {
+        setSelectedCandidate(null);
+      }
+      setSelectedIds((prev) => prev.filter((id) => id !== cand.id));
+      setSnackbar({ open: true, message: `${cand.name} removed from Talent Pool`, severity: 'info' });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to remove candidate from Talent Pool',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleBulkRemove = async () => {
+    if (selectedIds.length === 0) return;
+    try {
+      await Promise.all(selectedIds.map((id) => removeFromTalentPool(id)));
+      setCandidates((prev) => prev.filter((c) => !selectedIds.includes(c.id)));
+      if (selectedCandidate && selectedIds.includes(selectedCandidate.id)) {
+        setSelectedCandidate(null);
+      }
+      setSnackbar({ open: true, message: `Removed ${selectedIds.length} candidates from talent pool.`, severity: 'info' });
+      setSelectedIds([]);
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to remove selected candidates',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleImportFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const sheetName = wb.SheetNames[0];
+      const sheet = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      const mappedRows = rows
+        .map((r) => {
+          const norm = {};
+          Object.keys(r).forEach((k) => {
+            norm[k.trim().toLowerCase()] = String(r[k] ?? '').trim();
+          });
+          const skillsRaw = norm.skills || norm['key skills'] || '';
+          return {
+            name: norm.name || norm['full name'] || '',
+            email: norm.email || norm['email address'] || '',
+            phone: norm.phone || norm['phone number'] || '',
+            current_role: norm.role || norm['current role'] || 'Candidate',
+            experience: norm.experience || norm.exp || '2+ yrs',
+            skills: skillsRaw,
+            location: norm.location || 'Bengaluru',
+            source: norm.source || 'Import',
+            availability: norm.availability || 'Active'
+          };
+        })
+        .filter((r) => r.name && r.email);
+
+      setImportFileName(file.name);
+      setParsedImportRows(mappedRows);
+      setSnackbar({
+        open: true,
+        message: `Parsed ${mappedRows.length} valid candidates from ${file.name}`,
+        severity: mappedRows.length > 0 ? 'info' : 'warning'
+      });
+    } catch {
+      setSnackbar({ open: true, message: 'Could not parse spreadsheet file', severity: 'error' });
+    }
+  };
+
+  const handleStartImport = async () => {
+    if (parsedImportRows.length === 0) {
+      setSnackbar({ open: true, message: 'Please choose a CSV or Excel file with valid candidates first', severity: 'error' });
+      return;
+    }
+    try {
+      setSubmitting(true);
+      const res = await importTalentPool(parsedImportRows);
+      await loadTalentPool();
+      setOpenImportDialog(false);
+      setImportFileName('');
+      setParsedImportRows([]);
+      setSnackbar({
+        open: true,
+        message: `Imported ${res.imported ?? parsedImportRows.length} candidates into Talent Pool!`,
+        severity: 'success'
+      });
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: err.response?.data?.error || 'Failed to import candidates',
+        severity: 'error'
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -775,7 +1117,10 @@ export default function AdminTalentPool() {
             >
               <Tabs
                 value={activeTab}
-                onChange={(e, v) => setActiveTab(v)}
+                onChange={(e, v) => {
+                  setActiveTab(v);
+                  setPage(1);
+                }}
                 sx={{
                   '& .MuiTabs-indicator': { bgcolor: '#530EF0', height: 3, borderRadius: '3px 3px 0 0' },
                   '& .MuiTab-root': {
@@ -789,14 +1134,36 @@ export default function AdminTalentPool() {
                 }}
               >
                 <Tab label={`All Candidates (${totalCount})`} />
-                <Tab label="Active (356)" />
-                <Tab label="Passive (87)" />
-                <Tab label="Not Contacted (39)" />
+                <Tab label={`Active (${activeCount})`} />
+                <Tab label={`Passive (${passiveCount})`} />
+                <Tab label={`Not Contacted (${notContactedCount})`} />
               </Tabs>
 
-              <Typography variant="caption" sx={{ color: '#6B7280', fontWeight: 500, my: 1 }}>
-                Sort by: <strong>Recently Added ⌵</strong>
-              </Typography>
+              <Button
+                size="small"
+                onClick={(e) => setSortMenuAnchor(e.currentTarget)}
+                sx={{ color: '#6B7280', fontWeight: 500, my: 1, textTransform: 'none', fontSize: 12.5 }}
+              >
+                Sort by: <strong style={{ marginLeft: 4, color: '#111827' }}>{sortBy} ⌵</strong>
+              </Button>
+              <Menu
+                anchorEl={sortMenuAnchor}
+                open={Boolean(sortMenuAnchor)}
+                onClose={() => setSortMenuAnchor(null)}
+              >
+                {['Recently Added', 'Highest Match', 'Name (A-Z)'].map((opt) => (
+                  <MenuItem
+                    key={opt}
+                    selected={sortBy === opt}
+                    onClick={() => {
+                      setSortBy(opt);
+                      setSortMenuAnchor(null);
+                    }}
+                  >
+                    {opt}
+                  </MenuItem>
+                ))}
+              </Menu>
             </Box>
 
             {/* Filter Row */}
@@ -968,12 +1335,7 @@ export default function AdminTalentPool() {
                     size="small"
                     color="error"
                     variant="outlined"
-                    onClick={() => {
-                      setCandidates(candidates.filter((c) => !selectedIds.includes(c.id)));
-                      setSelectedIds([]);
-                      setSelectedCandidate(null);
-                      setSnackbar({ open: true, message: `Removed ${selectedIds.length} candidates from talent pool.`, severity: 'error' });
-                    }}
+                    onClick={handleBulkRemove}
                     sx={{ textTransform: 'none', fontWeight: 700, fontSize: 12, borderRadius: '6px', height: 30 }}
                   >
                     Remove
@@ -1185,10 +1547,10 @@ export default function AdminTalentPool() {
               }}
             >
               <Typography variant="caption" sx={{ color: '#6B7280' }}>
-                Showing 1-10 of {totalCount} candidates
+                Showing {filteredCandidates.length === 0 ? 0 : (page - 1) * rowsPerPage + 1}-{Math.min(page * rowsPerPage, filteredCandidates.length)} of {filteredCandidates.length} candidates
               </Typography>
               <Pagination
-                count={5}
+                count={Math.max(1, Math.ceil(filteredCandidates.length / rowsPerPage))}
                 page={page}
                 onChange={(e, val) => setPage(val)}
                 size="small"
@@ -1634,11 +1996,30 @@ export default function AdminTalentPool() {
         </MenuItem>
         <MenuItem
           onClick={() => {
+            const target = menuCandidate;
+            handleCloseMenu();
+            if (target) handleChangeAvailability(target, target.availability === 'Active' ? 'Passive' : 'Active');
+          }}
+        >
+          {menuCandidate?.availability === 'Active' ? 'Mark as Passive' : 'Mark as Active'}
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
             handleCloseMenu();
             navigate('/admin/ai-studio');
           }}
         >
           Evaluate in AI Studio
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            const target = menuCandidate;
+            handleCloseMenu();
+            if (target) handleRemoveCandidate(target);
+          }}
+          sx={{ color: '#EF4444' }}
+        >
+          Remove from Pool
         </MenuItem>
       </Menu>
 
@@ -1766,7 +2147,16 @@ export default function AdminTalentPool() {
       </Dialog>
 
       {/* Dialog: Import Candidates */}
-      <Dialog open={openImportDialog} onClose={() => setOpenImportDialog(false)} maxWidth="xs" fullWidth>
+      <Dialog
+        open={openImportDialog}
+        onClose={() => {
+          setOpenImportDialog(false);
+          setImportFileName('');
+          setParsedImportRows([]);
+        }}
+        maxWidth="xs"
+        fullWidth
+      >
         <DialogTitle sx={{ fontWeight: 700 }}>Import Candidates</DialogTitle>
         <DialogContent dividers>
           <Box
@@ -1780,34 +2170,40 @@ export default function AdminTalentPool() {
           >
             <UploadOutlined style={{ fontSize: 36, color: '#530EF0', marginBottom: 12 }} />
             <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827' }}>
-              Upload CSV or Excel spreadsheet
+              {importFileName ? `${importFileName} (${parsedImportRows.length} rows)` : 'Upload CSV or Excel spreadsheet'}
             </Typography>
             <Typography variant="caption" sx={{ color: '#9CA3AF', display: 'block', mt: 0.5 }}>
               Columns should include: Name, Email, Phone, Skills, Role, Experience
             </Typography>
             <Button
+              component="label"
               variant="outlined"
               size="small"
-              onClick={() => setSnackbar({ open: true, message: 'Selected candidate spreadsheet ready for import', severity: 'info' })}
               sx={{ mt: 2, textTransform: 'none', borderColor: '#E5E7EB', color: '#374151' }}
             >
               Choose File
+              <input type="file" hidden accept=".csv,.xlsx,.xls" onChange={handleImportFileChange} />
             </Button>
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setOpenImportDialog(false)} sx={{ textTransform: 'none', color: '#6B7280' }}>
+          <Button
+            onClick={() => {
+              setOpenImportDialog(false);
+              setImportFileName('');
+              setParsedImportRows([]);
+            }}
+            sx={{ textTransform: 'none', color: '#6B7280' }}
+          >
             Cancel
           </Button>
           <Button
             variant="contained"
-            onClick={() => {
-              setOpenImportDialog(false);
-              setSnackbar({ open: true, message: 'Candidates imported successfully!', severity: 'success' });
-            }}
+            disabled={submitting || parsedImportRows.length === 0}
+            onClick={handleStartImport}
             sx={{ bgcolor: '#530EF0', textTransform: 'none', fontWeight: 600 }}
           >
-            Start Import
+            {submitting ? 'Importing...' : 'Start Import'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1859,18 +2255,26 @@ export default function AdminTalentPool() {
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" sx={{ color: '#6B7280', fontSize: 13.5 }}>
-              Assign <strong>{selectedCandidate?.name}</strong> to an active requisition or vacancy:
+              Assign <strong>{selectedCandidate?.name || `${selectedIds.length} selected candidate(s)`}</strong> to an active requisition or vacancy:
             </Typography>
             <Select
               fullWidth
               size="small"
               value={selectedJobForApp}
               onChange={(e) => setSelectedJobForApp(e.target.value)}
+              displayEmpty
             >
-              <MenuItem value="Senior Software Engineer (JOB-0012)">Senior Software Engineer (JOB-0012)</MenuItem>
-              <MenuItem value="Frontend Developer (JOB-0011)">Frontend Developer (JOB-0011)</MenuItem>
-              <MenuItem value="Data Analyst (JOB-0010)">Data Analyst (JOB-0010)</MenuItem>
-              <MenuItem value="Full Stack Developer (JOB-0007)">Full Stack Developer (JOB-0007)</MenuItem>
+              {jobsList.length === 0 ? (
+                <MenuItem value="" disabled>
+                  No jobs available
+                </MenuItem>
+              ) : (
+                jobsList.map((job) => (
+                  <MenuItem key={job.id} value={String(job.id)}>
+                    {job.title} ({job.jobCode || `JOB-${String(job.id).padStart(4, '0')}`})
+                  </MenuItem>
+                ))
+              )}
             </Select>
           </Stack>
         </DialogContent>
