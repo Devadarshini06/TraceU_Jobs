@@ -2639,13 +2639,13 @@ func GetInternships(c *fiber.Ctx) error {
 	companySet := make(map[string]struct{})
 	for _, j := range jobs {
 		jobIDs = append(jobIDs, j.ID)
-		if strings.TrimSpace(j.Company) != "" {
+		if strings.TrimSpace(j.Company) != "" && internshipStatusLabel(j.Status) == "Published" {
 			companySet[strings.ToLower(strings.TrimSpace(j.Company))] = struct{}{}
 		}
 	}
 
 	var partners []domain.CompanyPartner
-	database.DB.Find(&partners)
+	database.DB.Where("status = ?", "active").Find(&partners)
 	for _, p := range partners {
 		if strings.TrimSpace(p.Company) != "" {
 			companySet[strings.ToLower(strings.TrimSpace(p.Company))] = struct{}{}
@@ -2944,7 +2944,32 @@ func DeleteInternship(c *fiber.Ctx) error {
 		})
 	}
 
-	database.DB.Delete(&job)
+	var apps []domain.Application
+	database.DB.Where("job_id = ?", job.ID).Find(&apps)
+	if len(apps) > 0 {
+		appIDs := make([]uint, 0, len(apps))
+		for _, a := range apps {
+			appIDs = append(appIDs, a.ID)
+		}
+		database.DB.Where("application_id IN ?", appIDs).Delete(&domain.Interview{})
+		database.DB.Where("job_id = ?", job.ID).Delete(&domain.Application{})
+	}
+
+	if result := database.DB.Delete(&job); result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
+			Success: false,
+			Message: "Failed to delete internship",
+			Error:   result.Error.Error(),
+		})
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Internship deleted",
+		Description: fmt.Sprintf("%s by %s", job.Title, job.Company),
+		EntityType:  "internship",
+		EntityID:    job.ID,
+	})
+
 	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
 		Success: true,
 		Message: "Internship deleted successfully",

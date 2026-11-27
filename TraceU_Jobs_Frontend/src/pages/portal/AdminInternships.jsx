@@ -400,7 +400,7 @@ export default function AdminInternships() {
       if (editingInternship?.id) {
         const res = await updateInternship(editingInternship.id, payload);
         const updated = mapBackendInternship(res.data);
-        setInternships((prev) => prev.map((i) => (i.id === editingInternship.id ? updated : i)));
+        await loadInternshipsData();
         setSnackbar({ open: true, message: `Internship "${updated.title}" updated!`, severity: 'success' });
       } else {
         await createInternship(payload);
@@ -419,7 +419,7 @@ export default function AdminInternships() {
   const handleStatusChange = async (item, status) => {
     try {
       await updateInternshipStatus(item.id, status);
-      setInternships((prev) => prev.map((i) => (i.id === item.id ? { ...i, status } : i)));
+      await loadInternshipsData();
       setSnackbar({ open: true, message: `Internship status updated to ${status}`, severity: 'success' });
     } catch (err) {
       setSnackbar({ open: true, message: err.message || 'Failed to update status', severity: 'error' });
@@ -429,7 +429,7 @@ export default function AdminInternships() {
   const handleDeleteInternship = async (item) => {
     try {
       await deleteInternship(item.id);
-      setInternships((prev) => prev.filter((i) => i.id !== item.id));
+      await loadInternshipsData();
       setSnackbar({ open: true, message: `Internship "${item.title}" deleted`, severity: 'info' });
     } catch (err) {
       setSnackbar({ open: true, message: err.message || 'Failed to delete internship', severity: 'error' });
