@@ -94,5 +94,6 @@ func SetupRoutes(app *fiber.App) {
 	admin.Get("/settings", controllers.GetSettings)
 	admin.Put("/settings/:section", controllers.SaveSettingsSection)
 	admin.Post("/settings/users", controllers.InviteWorkspaceUser)
+	admin.Patch("/settings/users/:id", controllers.UpdateWorkspaceUser)
 	admin.Delete("/settings/users/:id", controllers.DeleteWorkspaceUser)
 }

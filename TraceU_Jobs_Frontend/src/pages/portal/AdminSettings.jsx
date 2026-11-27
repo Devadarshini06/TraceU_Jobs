@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import getGreeting from 'utils/getGreeting';
 import { useBrand } from 'contexts/BrandContext';
 import { PRESET_LOGOS } from 'utils/presetLogos';
-import { getSettings, saveSettingsSection, inviteWorkspaceUser, deleteWorkspaceUser } from 'api/adminSettings';
+import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser } from 'api/adminSettings';
+import Menu from '@mui/material/Menu';
 import { validateEmail } from 'utils/emailValidation';
 
 // material-ui
@@ -221,27 +222,15 @@ export default function AdminSettings() {
     reader.readAsDataURL(file);
   };
 
-  // 3. Users & Permissions State (persisted)
+  // 3. Users & Permissions State (persisted via backend)
   const [userSearch, setUserSearch] = useState('');
+  const [userPage, setUserPage] = useState(1);
+  const [userMenuAnchor, setUserMenuAnchor] = useState(null);
+  const [userMenuTarget, setUserMenuTarget] = useState(null);
   const [openInviteDialog, setOpenInviteDialog] = useState(false);
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'Recruiter' });
   const [inviteErrors, setInviteErrors] = useState({});
-  const [usersList, setUsersList] = useState(() => {
-    try {
-      const stored = localStorage.getItem('traceu_admin_users');
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return [
-      { id: 1, name: 'Sarah Johnson', email: 'sarah@traceu.com', role: 'Admin', status: 'Active', avatar: avatar1 },
-      { id: 2, name: 'Rajesh Kumar', email: 'rajesh@traceu.com', role: 'Recruiter', status: 'Active', avatar: avatar2 },
-      { id: 3, name: 'Priya Sharma', email: 'priya@traceu.com', role: 'Hiring Manager', status: 'Active', avatar: avatar3 },
-      { id: 4, name: 'Arjun Nair', email: 'arjun@traceu.com', role: 'Interviewer', status: 'Active', avatar: avatar4 },
-      { id: 5, name: 'Meera Joshi', email: 'meera@traceu.com', role: 'HR Manager', status: 'Active', avatar: avatar5 },
-      { id: 6, name: 'Vikram Singh', email: 'vikram@traceu.com', role: 'Recruiter', status: 'Inactive', avatar: avatar1 },
-      { id: 7, name: 'Sneha Iyer', email: 'sneha@traceu.com', role: 'Interviewer', status: 'Active', avatar: avatar2 },
-      { id: 8, name: 'Deepak Patel', email: 'deepak@traceu.com', role: 'Viewer', status: 'Active', avatar: avatar3 }
-    ];
-  });
+  const [usersList, setUsersList] = useState([]);
 
   const handleInviteUser = async () => {
     const errs = {};
@@ -270,6 +259,16 @@ export default function AdminSettings() {
       setSnackbar({ open: true, message: `Invited ${newUser.name.trim()} successfully!`, severity: 'success' });
     } catch (err) {
       setSnackbar({ open: true, message: err.message || 'Failed to invite user', severity: 'error' });
+    }
+  };
+
+  const handleUpdateUser = async (id, payload) => {
+    try {
+      await updateWorkspaceUser(id, payload);
+      await loadBackendSettings();
+      setSnackbar({ open: true, message: 'User updated successfully!', severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to update user', severity: 'error' });
     }
   };
 
@@ -465,7 +464,7 @@ Best regards,
         if (b.favicon !== undefined) setFaviconState(b.favicon);
         updateBrand(b);
       }
-      if (Array.isArray(data.users) && data.users.length > 0) {
+      if (Array.isArray(data.users)) {
         const avatars = [avatar1, avatar2, avatar3, avatar4, avatar5];
         setUsersList(
           data.users.map((u) => ({
@@ -1481,121 +1480,195 @@ Best regards,
           {/* ========================================================================= */}
           {/* 3. USERS & PERMISSIONS                                                   */}
           {/* ========================================================================= */}
-          {activeSection === 'users' && (
-            <Stack spacing={2.5}>
-              {/* 4 Mini Stat Cards */}
-              <Grid container spacing={2}>
-                {[
-                  { label: 'Total Users', count: 24, icon: <TeamOutlined />, color: '#530EF0', bg: 'rgba(83, 14, 240, 0.08)' },
-                  { label: 'Active Users', count: 20, icon: <CheckCircleFilled />, color: '#10B981', bg: 'rgba(16, 185, 129, 0.08)' },
-                  { label: 'Pending Invites', count: 3, icon: <MailOutlined />, color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.08)' },
-                  { label: 'User Roles', count: 5, icon: <LockOutlined />, color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.08)' }
-                ].map((s, idx) => (
-                  <Grid size={{ xs: 12, sm: 6, md: 3 }} key={idx}>
-                    <Card sx={{ p: 2.2, borderRadius: '14px', border: '1px solid #F3F4F6', bgcolor: '#FFF' }}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="center">
-                        <Box sx={{ width: 36, height: 36, borderRadius: '8px', bgcolor: s.bg, color: s.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>
-                          {s.icon}
-                        </Box>
-                        <Typography variant="h4" sx={{ fontWeight: 700, color: '#111827', fontSize: '1.45rem' }}>
-                          {s.count}
+          {activeSection === 'users' && (() => {
+            const filteredUsers = usersList.filter(
+              (u) =>
+                (u.name || '').toLowerCase().includes(userSearch.toLowerCase()) ||
+                (u.email || '').toLowerCase().includes(userSearch.toLowerCase()) ||
+                (u.role || '').toLowerCase().includes(userSearch.toLowerCase())
+            );
+            const usersPerPage = 8;
+            const paginatedUsers = filteredUsers.slice((userPage - 1) * usersPerPage, userPage * usersPerPage);
+            const activeUsersCount = usersList.filter((u) => u.status === 'Active').length;
+            const pendingInvitesCount = usersList.filter((u) => u.status === 'Pending' || u.status === 'Invited').length;
+            const rolesCount = new Set(usersList.map((u) => u.role).filter(Boolean)).size;
+
+            return (
+              <Stack spacing={2.5}>
+                {/* 4 Mini Stat Cards */}
+                <Grid container spacing={2}>
+                  {[
+                    { label: 'Total Users', count: usersList.length, icon: <TeamOutlined />, color: '#530EF0', bg: 'rgba(83, 14, 240, 0.08)' },
+                    { label: 'Active Users', count: activeUsersCount, icon: <CheckCircleFilled />, color: '#10B981', bg: 'rgba(16, 185, 129, 0.08)' },
+                    { label: 'Pending Invites', count: pendingInvitesCount, icon: <MailOutlined />, color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.08)' },
+                    { label: 'User Roles', count: rolesCount, icon: <LockOutlined />, color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.08)' }
+                  ].map((s, idx) => (
+                    <Grid size={{ xs: 12, sm: 6, md: 3 }} key={idx}>
+                      <Card sx={{ p: 2.2, borderRadius: '14px', border: '1px solid #F3F4F6', bgcolor: '#FFF' }}>
+                        <Stack direction="row" justifyContent="space-between" alignItems="center">
+                          <Box sx={{ width: 36, height: 36, borderRadius: '8px', bgcolor: s.bg, color: s.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>
+                            {s.icon}
+                          </Box>
+                          <Typography variant="h4" sx={{ fontWeight: 700, color: '#111827', fontSize: '1.45rem' }}>
+                            {s.count}
+                          </Typography>
+                        </Stack>
+                        <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 12.5, mt: 0.75, display: 'block' }}>
+                          {s.label}
                         </Typography>
-                      </Stack>
-                      <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 12.5, mt: 0.75, display: 'block' }}>
-                        {s.label}
-                      </Typography>
-                    </Card>
-                  </Grid>
-                ))}
-              </Grid>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
 
-              {/* Users Table Card */}
-              <Card sx={{ borderRadius: '16px', border: '1px solid #F3F4F6', bgcolor: '#FFF', overflow: 'hidden' }}>
-                <Box sx={{ p: 2.2, bgcolor: '#FAFAFB', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
-                  <TextField
-                    size="small"
-                    placeholder="Search users by name, email or role..."
-                    value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchOutlined style={{ color: '#9CA3AF' }} />
-                        </InputAdornment>
-                      )
-                    }}
-                    sx={{ width: { xs: '100%', sm: 320 }, bgcolor: '#FFF', '& .MuiOutlinedInput-root': { borderRadius: '8px' } }}
-                  />
+                {/* Users Table Card */}
+                <Card sx={{ borderRadius: '16px', border: '1px solid #F3F4F6', bgcolor: '#FFF', overflow: 'hidden' }}>
+                  <Box sx={{ p: 2.2, bgcolor: '#FAFAFB', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+                    <TextField
+                      size="small"
+                      placeholder="Search users by name, email or role..."
+                      value={userSearch}
+                      onChange={(e) => {
+                        setUserSearch(e.target.value);
+                        setUserPage(1);
+                      }}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchOutlined style={{ color: '#9CA3AF' }} />
+                          </InputAdornment>
+                        )
+                      }}
+                      sx={{ width: { xs: '100%', sm: 320 }, bgcolor: '#FFF', '& .MuiOutlinedInput-root': { borderRadius: '8px' } }}
+                    />
 
-                  <Button
-                    variant="contained"
-                    startIcon={<PlusOutlined />}
-                    onClick={() => setOpenInviteDialog(true)}
-                    sx={{ bgcolor: '#530EF0', color: '#FFF', fontWeight: 600, borderRadius: '10px', textTransform: 'none', px: 2.2, '&:hover': { bgcolor: '#430bc2' } }}
-                  >
-                    + Invite User
-                  </Button>
-                </Box>
+                    <Button
+                      variant="contained"
+                      startIcon={<PlusOutlined />}
+                      onClick={() => setOpenInviteDialog(true)}
+                      sx={{ bgcolor: '#530EF0', color: '#FFF', fontWeight: 600, borderRadius: '10px', textTransform: 'none', px: 2.2, '&:hover': { bgcolor: '#430bc2' } }}
+                    >
+                      Invite User
+                    </Button>
+                  </Box>
 
-                <TableContainer>
-                  <Table size="medium">
-                    <TableHead sx={{ bgcolor: '#F9FAFB' }}>
-                      <TableRow>
-                        <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Name</TableCell>
-                        <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Email</TableCell>
-                        <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Role</TableCell>
-                        <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Status</TableCell>
-                        <TableCell align="right" sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {usersList
-                        .filter((u) => u.name.toLowerCase().includes(userSearch.toLowerCase()) || u.email.toLowerCase().includes(userSearch.toLowerCase()))
-                        .map((user) => (
-                          <TableRow key={user.id} hover>
-                            <TableCell>
-                              <Stack direction="row" spacing={1.5} alignItems="center">
-                                <Avatar src={user.avatar} sx={{ width: 34, height: 34 }} />
-                                <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13.5 }}>
-                                  {user.name}
-                                </Typography>
-                              </Stack>
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2" sx={{ color: '#6B7280', fontSize: 13.5 }}>{user.email}</Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Chip label={user.role} size="small" sx={{ fontSize: 12, height: 24, bgcolor: '#F3F4F6', color: '#374151' }} />
-                            </TableCell>
-                            <TableCell>
-                              <Chip
-                                label={user.status}
-                                size="small"
-                                sx={{
-                                  fontSize: 12,
-                                  height: 24,
-                                  fontWeight: 600,
-                                  bgcolor: user.status === 'Active' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                  color: user.status === 'Active' ? '#10B981' : '#EF4444'
-                                }}
-                              />
-                            </TableCell>
-                            <TableCell align="right">
-                              <IconButton size="small" onClick={() => setSnackbar({ open: true, message: 'User settings opened', severity: 'info' })}><MoreOutlined style={{ color: '#9CA3AF' }} /></IconButton>
+                  <TableContainer>
+                    <Table size="medium">
+                      <TableHead sx={{ bgcolor: '#F9FAFB' }}>
+                        <TableRow>
+                          <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Name</TableCell>
+                          <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Email</TableCell>
+                          <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Role</TableCell>
+                          <TableCell sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Status</TableCell>
+                          <TableCell align="right" sx={{ color: '#6B7280', fontWeight: 600, fontSize: 12, textTransform: 'uppercase' }}>Actions</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {paginatedUsers.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} align="center" sx={{ py: 5, color: '#6B7280' }}>
+                              No workspace users found. Click Invite User to add a team member.
                             </TableCell>
                           </TableRow>
-                        ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                        ) : (
+                          paginatedUsers.map((user) => (
+                            <TableRow key={user.id} hover>
+                              <TableCell>
+                                <Stack direction="row" spacing={1.5} alignItems="center">
+                                  <Avatar src={user.avatar} sx={{ width: 34, height: 34 }} />
+                                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 13.5 }}>
+                                    {user.name}
+                                  </Typography>
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" sx={{ color: '#6B7280', fontSize: 13.5 }}>{user.email}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Chip label={user.role} size="small" sx={{ fontSize: 12, height: 24, bgcolor: '#F3F4F6', color: '#374151' }} />
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={user.status}
+                                  size="small"
+                                  sx={{
+                                    fontSize: 12,
+                                    height: 24,
+                                    fontWeight: 600,
+                                    bgcolor: user.status === 'Active' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                    color: user.status === 'Active' ? '#10B981' : '#EF4444'
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell align="right">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    setUserMenuAnchor(e.currentTarget);
+                                    setUserMenuTarget(user);
+                                  }}
+                                >
+                                  <MoreOutlined style={{ color: '#9CA3AF' }} />
+                                </IconButton>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
 
-                <Box sx={{ p: 2, borderTop: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Typography variant="caption" sx={{ color: '#6B7280' }}>Showing 1-8 of 24 users</Typography>
-                  <Pagination count={3} size="small" sx={{ '& .Mui-selected': { bgcolor: '#530EF0 !important', color: '#FFF' } }} />
-                </Box>
-              </Card>
-            </Stack>
-          )}
+                  <Box sx={{ p: 2, borderTop: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Typography variant="caption" sx={{ color: '#6B7280' }}>
+                      Showing {filteredUsers.length === 0 ? 0 : (userPage - 1) * usersPerPage + 1}-{Math.min(userPage * usersPerPage, filteredUsers.length)} of {filteredUsers.length} users
+                    </Typography>
+                    <Pagination
+                      count={Math.max(1, Math.ceil(filteredUsers.length / usersPerPage))}
+                      page={userPage}
+                      onChange={(e, val) => setUserPage(val)}
+                      size="small"
+                      sx={{ '& .Mui-selected': { bgcolor: '#530EF0 !important', color: '#FFF' } }}
+                    />
+                  </Box>
+                </Card>
+
+                <Menu anchorEl={userMenuAnchor} open={Boolean(userMenuAnchor)} onClose={() => setUserMenuAnchor(null)}>
+                  <MenuItem
+                    onClick={() => {
+                      const target = userMenuTarget;
+                      setUserMenuAnchor(null);
+                      if (target) handleUpdateUser(target.id, { status: target.status === 'Active' ? 'Inactive' : 'Active' });
+                    }}
+                  >
+                    {userMenuTarget?.status === 'Active' ? 'Deactivate User' : 'Activate User'}
+                  </MenuItem>
+                  {['Admin', 'HR Manager', 'Recruiter', 'Hiring Manager', 'Interviewer', 'Viewer'].map((roleOpt) => (
+                    <MenuItem
+                      key={roleOpt}
+                      selected={userMenuTarget?.role === roleOpt}
+                      onClick={() => {
+                        const target = userMenuTarget;
+                        setUserMenuAnchor(null);
+                        if (target) handleUpdateUser(target.id, { role: roleOpt });
+                      }}
+                    >
+                      Set Role: {roleOpt}
+                    </MenuItem>
+                  ))}
+                  <MenuItem
+                    onClick={() => {
+                      const target = userMenuTarget;
+                      setUserMenuAnchor(null);
+                      if (target) handleDeleteUser(target.id);
+                    }}
+                    sx={{ color: '#EF4444' }}
+                  >
+                    Remove User
+                  </MenuItem>
+                </Menu>
+              </Stack>
+            );
+          })()}
 
           {/* ========================================================================= */}
           {/* 4. WORKFLOW SETTINGS                                                     */}

@@ -55,6 +55,13 @@ export async function inviteWorkspaceUser(payload) {
   });
 }
 
+export async function updateWorkspaceUser(id, payload) {
+  return request(`/users/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function deleteWorkspaceUser(id) {
   return request(`/users/${id}`, {
     method: 'DELETE'

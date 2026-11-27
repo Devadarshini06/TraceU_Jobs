@@ -3635,6 +3635,57 @@ func InviteWorkspaceUser(c *fiber.Ctx) error {
 	})
 }
 
+// UpdateWorkspaceUser updates a workspace member's role or status.
+func UpdateWorkspaceUser(c *fiber.Ctx) error {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid user ID",
+		})
+	}
+
+	var member domain.WorkspaceMember
+	if err := database.DB.First(&member, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(model.APIResponse{
+			Success: false,
+			Message: "User not found",
+		})
+	}
+
+	var req struct {
+		Role   string `json:"role"`
+		Status string `json:"status"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Invalid request payload",
+		})
+	}
+
+	if r := strings.TrimSpace(req.Role); r != "" {
+		member.Role = r
+	}
+	if s := strings.TrimSpace(req.Status); s != "" {
+		member.Status = s
+	}
+	database.DB.Save(&member)
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Changed Permission",
+		Description: fmt.Sprintf("%s -> %s (%s)", member.Email, member.Role, member.Status),
+		EntityType:  "workspace_member",
+		EntityID:    member.ID,
+	})
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Updated %s successfully", member.Name),
+		Data:    member,
+	})
+}
+
 // DeleteWorkspaceUser removes a team member from workspace_members.
 func DeleteWorkspaceUser(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
