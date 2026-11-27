@@ -387,26 +387,79 @@ export default function AdminSettings() {
   };
 
   // 5. Templates & Preferences State (persisted)
+  const DEFAULT_EMAIL_TEMPLATES = {
+    invitation: {
+      name: 'Invitation to Apply',
+      desc: 'Email sent to candidates when inviting them to apply.',
+      subject: "You're invited to apply for {{job_title}} at {{company_name}}",
+      body: "Hi {{candidate_name}},\n\nWe came across your profile and would like to invite you to apply for the {{job_title}} position at {{company_name}}.\n\n{{job_description_link}}\n\nBest regards,\n{{company_name}} Team"
+    },
+    received: {
+      name: 'Application Received',
+      desc: 'Automatic confirmation sent when a candidate submits an application.',
+      subject: 'Application received for {{job_title}} at {{company_name}}',
+      body: 'Hi {{candidate_name}},\n\nThank you for applying for {{job_title}} at {{company_name}}. Our hiring team is reviewing your application and will update you soon.\n\nBest regards,\n{{company_name}} Recruiting'
+    },
+    interview: {
+      name: 'Interview Invitation',
+      desc: 'Email sent when scheduling an interview round with a candidate.',
+      subject: 'Interview Invitation: {{job_title}} at {{company_name}}',
+      body: 'Hi {{candidate_name}},\n\nWe would love to invite you for an interview for the {{job_title}} role at {{company_name}}. Please confirm your availability.\n\nBest regards,\n{{company_name}} Team'
+    },
+    feedback: {
+      name: 'Interview Feedback',
+      desc: 'Internal/candidate follow-up requesting interview feedback.',
+      subject: 'Feedback Request: {{job_title}} Interview',
+      body: 'Hi {{candidate_name}},\n\nThank you for taking the time to interview for {{job_title}} at {{company_name}}. We appreciate your interest and will share next steps shortly.\n\nBest regards,\n{{company_name}} Team'
+    },
+    offer: {
+      name: 'Offer Letter',
+      desc: 'Official offer communication sent to selected candidates.',
+      subject: 'Job Offer: {{job_title}} at {{company_name}}',
+      body: 'Hi {{candidate_name}},\n\nCongratulations! We are thrilled to extend an offer for the {{job_title}} position at {{company_name}}.\n\nBest regards,\n{{company_name}} HR Team'
+    },
+    rejection: {
+      name: 'Rejection Email',
+      desc: 'Polite status update sent when an application is not moving forward.',
+      subject: 'Update on your application for {{job_title}}',
+      body: 'Hi {{candidate_name}},\n\nThank you for applying for {{job_title}} at {{company_name}}. After careful review, we will not be moving forward at this time, but we will keep your profile in our talent pool.\n\nBest regards,\n{{company_name}} Team'
+    },
+    welcome: {
+      name: 'Welcome Email',
+      desc: 'Onboarding welcome email sent to newly hired candidates.',
+      subject: 'Welcome to {{company_name}}!',
+      body: 'Hi {{candidate_name}},\n\nWelcome aboard! We are excited to have you join {{company_name}} as {{job_title}}.\n\nBest regards,\n{{company_name}} Team'
+    }
+  };
+  const DEFAULT_NOTIFICATION_PREFS = {
+    emailOnNewApplication: true,
+    emailOnStageChange: true,
+    interviewReminders: true,
+    dailyDigest: false
+  };
+  const DEFAULT_APPLICATION_PREFS = {
+    requireResume: true,
+    autoAcknowledge: true,
+    allowMultipleApplications: true,
+    defaultExpiryDays: '14 days'
+  };
+
   const [templateSubTab, setTemplateSubTab] = useState(0);
   const [selectedTemplate, setSelectedTemplate] = useState('invitation');
   const [openPreviewDialog, setOpenPreviewDialog] = useState(false);
-  const [templateContent, setTemplateContent] = useState(() => {
-    try {
-      const stored = localStorage.getItem('traceu_admin_templates');
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return {
-      subject: "You're invited to apply for {{job_title}} at {{company_name}}",
-      body: `Hi {{candidate_name}},
-
-We came across your profile and would like to invite you to apply for the {{job_title}} position at {{company_name}}.
-
-{{job_description_link}}
-
-Best regards,
-{{company_name}} Team`
-    };
-  });
+  const [emailTemplates, setEmailTemplates] = useState(DEFAULT_EMAIL_TEMPLATES);
+  const [notificationPrefs, setNotificationPrefs] = useState(DEFAULT_NOTIFICATION_PREFS);
+  const [applicationPrefs, setApplicationPrefs] = useState(DEFAULT_APPLICATION_PREFS);
+  const templateContent = emailTemplates[selectedTemplate] || DEFAULT_EMAIL_TEMPLATES.invitation;
+  const setTemplateContent = (nextVal) => {
+    setEmailTemplates((prev) => ({
+      ...prev,
+      [selectedTemplate]: {
+        ...(prev[selectedTemplate] || DEFAULT_EMAIL_TEMPLATES[selectedTemplate]),
+        ...nextVal
+      }
+    }));
+  };
 
   // 6. Integrations State (persisted)
   const [integrationFilter, setIntegrationFilter] = useState('All');
@@ -511,7 +564,15 @@ Best regards,
         if (sections.workflow.stageAutomations) setStageAutomations(sections.workflow.stageAutomations);
       }
       if (sections.templates) {
-        setTemplateContent((prev) => ({ ...prev, ...sections.templates }));
+        if (sections.templates.templates) {
+          setEmailTemplates((prev) => ({ ...prev, ...sections.templates.templates }));
+        }
+        if (sections.templates.notifications) {
+          setNotificationPrefs((prev) => ({ ...prev, ...sections.templates.notifications }));
+        }
+        if (sections.templates.preferences) {
+          setApplicationPrefs((prev) => ({ ...prev, ...sections.templates.preferences }));
+        }
       }
       if (sections.integrations?.items && Array.isArray(sections.integrations.items)) {
         setIntegrationsList(sections.integrations.items);
@@ -570,9 +631,14 @@ Best regards,
         localStorage.setItem('traceu_admin_workflow', JSON.stringify({ stages, stageAutomations }));
         setSnackbar({ open: true, message: 'Recruitment workflow & stage settings saved successfully!', severity: 'success' });
       } else if (activeSection === 'templates') {
-        await saveSettingsSection('templates', templateContent);
-        localStorage.setItem('traceu_admin_templates', JSON.stringify(templateContent));
-        setSnackbar({ open: true, message: 'Email template & preferences saved successfully!', severity: 'success' });
+        const templatesPayload = {
+          templates: emailTemplates,
+          notifications: notificationPrefs,
+          preferences: applicationPrefs
+        };
+        await saveSettingsSection('templates', templatesPayload);
+        localStorage.setItem('traceu_admin_templates', JSON.stringify(templatesPayload));
+        setSnackbar({ open: true, message: 'Email templates & preferences saved successfully!', severity: 'success' });
       } else if (activeSection === 'security') {
         await saveSettingsSection('security', securitySettings);
         localStorage.setItem('traceu_admin_security', JSON.stringify(securitySettings));
@@ -637,6 +703,16 @@ Best regards,
       setStageAutomations(defaultAuto);
       await saveSettingsSection('workflow', { stages: defaultStages, stageAutomations: defaultAuto }).catch(() => {});
       setSnackbar({ open: true, message: 'Workflow settings restored to defaults', severity: 'info' });
+    } else if (activeSection === 'templates') {
+      setEmailTemplates(DEFAULT_EMAIL_TEMPLATES);
+      setNotificationPrefs(DEFAULT_NOTIFICATION_PREFS);
+      setApplicationPrefs(DEFAULT_APPLICATION_PREFS);
+      await saveSettingsSection('templates', {
+        templates: DEFAULT_EMAIL_TEMPLATES,
+        notifications: DEFAULT_NOTIFICATION_PREFS,
+        preferences: DEFAULT_APPLICATION_PREFS
+      }).catch(() => {});
+      setSnackbar({ open: true, message: 'Templates & preferences restored to defaults', severity: 'info' });
     }
     await loadBackendSettings();
   };
@@ -1991,10 +2067,10 @@ Best regards,
                     {/* Right Editor Area */}
                     <Box sx={{ flex: 1, p: 3 }}>
                       <Typography variant="h3" sx={{ fontWeight: 600, color: '#111827', fontSize: 16, mb: 0.5 }}>
-                        Invitation to Apply
+                        {templateContent.name}
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 12.5, display: 'block', mb: 2 }}>
-                        Email sent to candidates when inviting them to apply.
+                        {templateContent.desc}
                       </Typography>
 
                       <Box sx={{ mb: 2 }}>
@@ -2046,12 +2122,83 @@ Best regards,
                   </Box>
                 )}
 
-                {/* Subtab 1 & 2 */}
-                {templateSubTab !== 0 && (
+                {/* Subtab 1: Notification Settings */}
+                {templateSubTab === 1 && (
                   <Box sx={{ p: 3 }}>
-                    <Typography variant="body2" sx={{ color: '#6B7280' }}>
-                      Configure global defaults and delivery rules for {templateSubTab === 1 ? 'notifications' : 'application preferences'}.
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#111827', mb: 0.5 }}>
+                      Notification Delivery Rules
                     </Typography>
+                    <Typography variant="caption" sx={{ color: '#6B7280', display: 'block', mb: 2.5 }}>
+                      Choose when email notifications are dispatched to recruiters and hiring managers.
+                    </Typography>
+                    <Stack spacing={2}>
+                      {[
+                        { key: 'emailOnNewApplication', title: 'New Application Alert', desc: 'Send email to job owner when a candidate applies.' },
+                        { key: 'emailOnStageChange', title: 'Stage Transition Notification', desc: 'Notify hiring team when an applicant moves to a new stage.' },
+                        { key: 'interviewReminders', title: 'Interview Reminders', desc: 'Send automatic reminders 24 hours before scheduled interviews.' },
+                        { key: 'dailyDigest', title: 'Daily Recruitment Digest', desc: 'Receive a daily summary of new applications and hires.' }
+                      ].map((item) => (
+                        <Stack key={item.key} direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 0.5 }}>
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 600, color: '#374151', fontSize: 13.5 }}>{item.title}</Typography>
+                            <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 12 }}>{item.desc}</Typography>
+                          </Box>
+                          <Switch
+                            size="small"
+                            checked={Boolean(notificationPrefs[item.key])}
+                            onChange={(e) => setNotificationPrefs({ ...notificationPrefs, [item.key]: e.target.checked })}
+                            sx={{ '& .Mui-checked': { color: '#530EF0' } }}
+                          />
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
+
+                {/* Subtab 2: Application Preferences */}
+                {templateSubTab === 2 && (
+                  <Box sx={{ p: 3 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#111827', mb: 0.5 }}>
+                      Application Intake Preferences
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: '#6B7280', display: 'block', mb: 2.5 }}>
+                      Configure default validation and candidate application rules across jobs and internships.
+                    </Typography>
+                    <Stack spacing={2.5}>
+                      {[
+                        { key: 'requireResume', title: 'Require Resume Upload', desc: 'Make resume attachment compulsory for all applications.' },
+                        { key: 'autoAcknowledge', title: 'Auto-Acknowledge Applications', desc: 'Automatically send the Application Received email upon submission.' },
+                        { key: 'allowMultipleApplications', title: 'Allow Multiple Applications', desc: 'Permit candidates to apply to multiple active openings.' }
+                      ].map((item) => (
+                        <Stack key={item.key} direction="row" justifyContent="space-between" alignItems="center">
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 600, color: '#374151', fontSize: 13.5 }}>{item.title}</Typography>
+                            <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 12 }}>{item.desc}</Typography>
+                          </Box>
+                          <Switch
+                            size="small"
+                            checked={Boolean(applicationPrefs[item.key])}
+                            onChange={(e) => setApplicationPrefs({ ...applicationPrefs, [item.key]: e.target.checked })}
+                            sx={{ '& .Mui-checked': { color: '#530EF0' } }}
+                          />
+                        </Stack>
+                      ))}
+                      <Box sx={{ maxWidth: 260 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600, color: '#374151', display: 'block', mb: 0.5 }}>
+                          Default Review SLA
+                        </Typography>
+                        <Select
+                          fullWidth
+                          size="small"
+                          value={applicationPrefs.defaultExpiryDays}
+                          onChange={(e) => setApplicationPrefs({ ...applicationPrefs, defaultExpiryDays: e.target.value })}
+                        >
+                          <MenuItem value="7 days">7 days</MenuItem>
+                          <MenuItem value="14 days">14 days</MenuItem>
+                          <MenuItem value="30 days">30 days</MenuItem>
+                        </Select>
+                      </Box>
+                    </Stack>
                   </Box>
                 )}
               </Card>
