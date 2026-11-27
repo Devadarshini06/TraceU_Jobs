@@ -286,6 +286,10 @@ export default function AdminSettings() {
   // 4. Workflow Settings State (persisted)
   const [openAddStageDialog, setOpenAddStageDialog] = useState(false);
   const [newStageName, setNewStageName] = useState('');
+  const [newStageDesc, setNewStageDesc] = useState('');
+  const [editingStage, setEditingStage] = useState(null);
+  const [stageMenuAnchor, setStageMenuAnchor] = useState(null);
+  const [stageMenuTarget, setStageMenuTarget] = useState(null);
   const [stageError, setStageError] = useState('');
   const [stages, setStages] = useState(() => {
     try {
@@ -325,22 +329,51 @@ export default function AdminSettings() {
       setStageError('Stage name is required');
       return;
     }
-    const newStg = {
-      id: Date.now(),
-      name: newStageName.trim(),
-      desc: 'Custom configured recruitment stage',
-      color: primaryColor || '#530EF0'
-    };
-    const updated = [...stages, newStg];
+    let updated;
+    if (editingStage) {
+      updated = stages.map((s) =>
+        s.id === editingStage.id
+          ? { ...s, name: newStageName.trim(), desc: newStageDesc.trim() || s.desc }
+          : s
+      );
+    } else {
+      const newStg = {
+        id: Date.now(),
+        name: newStageName.trim(),
+        desc: newStageDesc.trim() || 'Custom configured recruitment stage',
+        color: primaryColor || '#530EF0'
+      };
+      updated = [...stages, newStg];
+    }
     setStages(updated);
     try {
       await saveSettingsSection('workflow', { stages: updated, stageAutomations });
       await loadBackendSettings();
     } catch (e) {}
     setOpenAddStageDialog(false);
+    setEditingStage(null);
     setNewStageName('');
+    setNewStageDesc('');
     setStageError('');
-    setSnackbar({ open: true, message: `Added stage "${newStg.name}" to workflow!`, severity: 'success' });
+    setSnackbar({
+      open: true,
+      message: editingStage ? `Updated stage "${newStageName.trim()}"!` : `Added stage "${newStageName.trim()}" to workflow!`,
+      severity: 'success'
+    });
+  };
+
+  const handleMoveStage = async (index, direction) => {
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= stages.length) return;
+    const updated = [...stages];
+    const [moved] = updated.splice(index, 1);
+    updated.splice(targetIdx, 0, moved);
+    setStages(updated);
+    try {
+      await saveSettingsSection('workflow', { stages: updated, stageAutomations });
+      await loadBackendSettings();
+      setSnackbar({ open: true, message: `Moved "${moved.name}" ${direction < 0 ? 'up' : 'down'}`, severity: 'success' });
+    } catch (e) {}
   };
 
   const handleDeleteStage = async (id) => {
@@ -589,6 +622,21 @@ Best regards,
       await saveSettingsSection('org', defaultOrg).catch(() => {});
       localStorage.setItem('traceu_admin_org_settings', JSON.stringify(defaultOrg));
       setSnackbar({ open: true, message: 'Organization settings restored to defaults', severity: 'info' });
+    } else if (activeSection === 'workflow') {
+      const defaultStages = [
+        { id: 1, name: 'Applied', desc: 'Initial application received from candidate', color: '#3B82F6' },
+        { id: 2, name: 'Screening', desc: 'Resume and profile evaluation by recruiter', color: '#F59E0B' },
+        { id: 3, name: 'Shortlisted', desc: 'Candidate approved for departmental interview', color: '#EAB308' },
+        { id: 4, name: 'Interview', desc: 'Technical and cultural assessment rounds', color: '#8B5CF6' },
+        { id: 5, name: 'Assessment', desc: 'Practical test or assignment evaluation', color: '#06B6D4' },
+        { id: 6, name: 'Offered', desc: 'Official job offer extended to candidate', color: '#10B981' },
+        { id: 7, name: 'Hired', desc: 'Offer accepted and onboarding initiated', color: '#059669' }
+      ];
+      const defaultAuto = { autoMove: false, notifyTeam: true, allowComments: true };
+      setStages(defaultStages);
+      setStageAutomations(defaultAuto);
+      await saveSettingsSection('workflow', { stages: defaultStages, stageAutomations: defaultAuto }).catch(() => {});
+      setSnackbar({ open: true, message: 'Workflow settings restored to defaults', severity: 'info' });
     }
     await loadBackendSettings();
   };
@@ -1690,10 +1738,16 @@ Best regards,
                     size="small"
                     variant="outlined"
                     startIcon={<PlusOutlined />}
-                    onClick={() => setOpenAddStageDialog(true)}
+                    onClick={() => {
+                      setEditingStage(null);
+                      setNewStageName('');
+                      setNewStageDesc('');
+                      setStageError('');
+                      setOpenAddStageDialog(true);
+                    }}
                     sx={{ borderColor: '#530EF0', color: '#530EF0', fontWeight: 600, textTransform: 'none', borderRadius: '8px' }}
                   >
-                    + Add Stage
+                    Add Stage
                   </Button>
                 </Stack>
 
@@ -1741,10 +1795,67 @@ Best regards,
                           </Typography>
                         </Box>
                       </Stack>
-                      <IconButton size="small" onClick={() => setSnackbar({ open: true, message: 'Pipeline stage options opened', severity: 'info' })}><MoreOutlined style={{ color: '#9CA3AF' }} /></IconButton>
+                      <IconButton
+                        size="small"
+                        onClick={(e) => {
+                          setStageMenuAnchor(e.currentTarget);
+                          setStageMenuTarget({ stage, idx });
+                        }}
+                      >
+                        <MoreOutlined style={{ color: '#9CA3AF' }} />
+                      </IconButton>
                     </Box>
                   ))}
                 </Stack>
+
+                <Menu anchorEl={stageMenuAnchor} open={Boolean(stageMenuAnchor)} onClose={() => setStageMenuAnchor(null)}>
+                  <MenuItem
+                    disabled={!stageMenuTarget || stageMenuTarget.idx === 0}
+                    onClick={() => {
+                      const idx = stageMenuTarget?.idx;
+                      setStageMenuAnchor(null);
+                      if (typeof idx === 'number') handleMoveStage(idx, -1);
+                    }}
+                  >
+                    Move Up
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!stageMenuTarget || stageMenuTarget.idx >= stages.length - 1}
+                    onClick={() => {
+                      const idx = stageMenuTarget?.idx;
+                      setStageMenuAnchor(null);
+                      if (typeof idx === 'number') handleMoveStage(idx, 1);
+                    }}
+                  >
+                    Move Down
+                  </MenuItem>
+                  <MenuItem
+                    onClick={() => {
+                      const st = stageMenuTarget?.stage;
+                      setStageMenuAnchor(null);
+                      if (st) {
+                        setEditingStage(st);
+                        setNewStageName(st.name || '');
+                        setNewStageDesc(st.desc || '');
+                        setStageError('');
+                        setOpenAddStageDialog(true);
+                      }
+                    }}
+                  >
+                    Edit Stage
+                  </MenuItem>
+                  <MenuItem
+                    disabled={stages.length <= 1}
+                    onClick={() => {
+                      const st = stageMenuTarget?.stage;
+                      setStageMenuAnchor(null);
+                      if (st) handleDeleteStage(st.id);
+                    }}
+                    sx={{ color: '#EF4444' }}
+                  >
+                    Remove Stage
+                  </MenuItem>
+                </Menu>
               </Card>
 
               {/* Stage Settings */}
@@ -2485,24 +2596,33 @@ Best regards,
         fullWidth
       >
         <DialogTitle sx={{ fontWeight: 700, fontSize: '1.05rem', color: '#111827' }}>
-          Add Hiring Stage
+          {editingStage ? 'Edit Hiring Stage' : 'Add Hiring Stage'}
         </DialogTitle>
         <DialogContent>
-          <TextField
-            autoFocus
-            fullWidth
-            size="small"
-            label="Stage Name *"
-            placeholder="e.g. Cultural Fit Interview"
-            value={newStageName}
-            onChange={(e) => {
-              setNewStageName(e.target.value);
-              if (stageError) setStageError('');
-            }}
-            error={Boolean(stageError)}
-            helperText={stageError}
-            sx={{ mt: 1 }}
-          />
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              label="Stage Name *"
+              placeholder="e.g. Cultural Fit Interview"
+              value={newStageName}
+              onChange={(e) => {
+                setNewStageName(e.target.value);
+                if (stageError) setStageError('');
+              }}
+              error={Boolean(stageError)}
+              helperText={stageError}
+            />
+            <TextField
+              fullWidth
+              size="small"
+              label="Description"
+              placeholder="Describe what happens in this stage"
+              value={newStageDesc}
+              onChange={(e) => setNewStageDesc(e.target.value)}
+            />
+          </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 0 }}>
           <Button
