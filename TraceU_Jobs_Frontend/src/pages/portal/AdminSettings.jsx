@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import getGreeting from 'utils/getGreeting';
 import { useBrand } from 'contexts/BrandContext';
 import { PRESET_LOGOS } from 'utils/presetLogos';
-import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser } from 'api/adminSettings';
+import { getSettings, saveSettingsSection, inviteWorkspaceUser, updateWorkspaceUser, deleteWorkspaceUser, testIntegrationConnection } from 'api/adminSettings';
 import Menu from '@mui/material/Menu';
 import { validateEmail } from 'utils/emailValidation';
 
@@ -23,6 +23,7 @@ import IconButton from '@mui/material/IconButton';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
 import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -462,42 +463,150 @@ export default function AdminSettings() {
   };
 
   // 6. Integrations State (persisted)
+  const DEFAULT_INTEGRATIONS = [
+    {
+      id: 'linkedin',
+      name: 'LinkedIn',
+      desc: 'Post jobs and import candidates from LinkedIn.',
+      category: 'Job Boards',
+      connected: true,
+      icon: 'linkedin',
+      config: { companyId: 'traceu-technologies', apiKey: '', autoPostJobs: true, syncCandidates: true }
+    },
+    {
+      id: 'naukri',
+      name: 'Naukri',
+      desc: 'Post jobs to Naukri and import applications.',
+      category: 'Job Boards',
+      connected: true,
+      icon: 'naukri',
+      config: { companyId: 'traceu-in', apiKey: '', autoPostJobs: true, syncCandidates: true }
+    },
+    {
+      id: 'indeed',
+      name: 'Indeed',
+      desc: 'Post jobs to Indeed and import applications.',
+      category: 'Job Boards',
+      connected: false,
+      icon: 'indeed',
+      config: { companyId: '', apiKey: '', autoPostJobs: false, syncCandidates: true }
+    },
+    {
+      id: 'google',
+      name: 'Google Workspace',
+      desc: 'Sync with Google Calendar and Gmail.',
+      category: 'Calendar',
+      connected: true,
+      icon: 'google',
+      config: { domain: 'traceu.com', clientId: '', syncCalendar: true, syncEmail: true }
+    },
+    {
+      id: 'ms365',
+      name: 'Microsoft 365',
+      desc: 'Sync with Outlook and Teams.',
+      category: 'Communication',
+      connected: false,
+      icon: 'ms365',
+      config: { domain: '', clientId: '', syncCalendar: true, syncEmail: false }
+    },
+    {
+      id: 'slack',
+      name: 'Slack',
+      desc: 'Receive notifications in Slack.',
+      category: 'Communication',
+      connected: true,
+      icon: 'slack',
+      config: { webhookUrl: 'https://hooks.slack.com/services/T000/B000/XXXX', channel: '#hiring-alerts', notifyNewApplicant: true, notifyStageChange: true }
+    },
+    {
+      id: 'zoom',
+      name: 'Zoom',
+      desc: 'Schedule and manage interviews.',
+      category: 'Communication',
+      connected: false,
+      icon: 'zoom',
+      config: { accountId: '', clientId: '', autoGenerateLinks: true }
+    },
+    {
+      id: 'webhook',
+      name: 'Webhook',
+      desc: 'Send data to your custom endpoints.',
+      category: 'ATS & HR Tools',
+      connected: true,
+      icon: 'webhook',
+      config: { webhookUrl: 'https://api.traceu.com/webhooks/ats', secretKey: '', events: 'application.created, stage.updated' }
+    }
+  ];
+
   const [integrationFilter, setIntegrationFilter] = useState('All');
   const [integrationsList, setIntegrationsList] = useState(() => {
     try {
       const stored = localStorage.getItem('traceu_admin_integrations');
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return DEFAULT_INTEGRATIONS.map((def) => {
+            const match = parsed.find((p) => p.id === def.id);
+            return match ? { ...def, ...match, config: { ...def.config, ...(match.config || {}) } } : def;
+          });
+        }
+      }
     } catch (e) {}
-    return [
-      { id: 'linkedin', name: 'LinkedIn', desc: 'Post jobs and import candidates from LinkedIn.', category: 'Job Boards', connected: true, icon: 'linkedin' },
-      { id: 'naukri', name: 'Naukri', desc: 'Post jobs to Naukri and import applications.', category: 'Job Boards', connected: true, icon: 'naukri' },
-      { id: 'indeed', name: 'Indeed', desc: 'Post jobs to Indeed and import applications.', category: 'Job Boards', connected: false, icon: 'indeed' },
-      { id: 'google', name: 'Google Workspace', desc: 'Sync with Google Calendar and Gmail.', category: 'Calendar', connected: true, icon: 'google' },
-      { id: 'ms365', name: 'Microsoft 365', desc: 'Sync with Outlook and Teams.', category: 'Communication', connected: false, icon: 'ms365' },
-      { id: 'slack', name: 'Slack', desc: 'Receive notifications in Slack.', category: 'Communication', connected: true, icon: 'slack' },
-      { id: 'zoom', name: 'Zoom', desc: 'Schedule and manage interviews.', category: 'Communication', connected: false, icon: 'zoom' },
-      { id: 'webhook', name: 'Webhook', desc: 'Send data to your custom endpoints.', category: 'ATS & HR Tools', connected: true, icon: 'webhook' }
-    ];
+    return DEFAULT_INTEGRATIONS;
   });
 
-  const handleToggleIntegration = async (id) => {
-    const updated = integrationsList.map((item) => {
-      if (item.id === id) {
-        const nextState = !item.connected;
-        setSnackbar({
-          open: true,
-          message: nextState ? `Connected ${item.name} successfully!` : `Disconnected ${item.name}`,
-          severity: nextState ? 'success' : 'info'
-        });
-        return { ...item, connected: nextState };
-      }
-      return item;
+  const [openIntegrationDialog, setOpenIntegrationDialog] = useState(false);
+  const [activeIntegration, setActiveIntegration] = useState(null);
+  const [testingIntegration, setTestingIntegration] = useState(false);
+  const [savingIntegration, setSavingIntegration] = useState(false);
+
+  const handleOpenIntegrationConfig = (item) => {
+    setActiveIntegration({
+      ...item,
+      config: { ...(item.config || {}) }
     });
+    setOpenIntegrationDialog(true);
+  };
+
+  const handleTestIntegration = async () => {
+    if (!activeIntegration) return;
+    setTestingIntegration(true);
+    try {
+      const json = await testIntegrationConnection(activeIntegration.id, {
+        name: activeIntegration.name,
+        config: activeIntegration.config || {}
+      });
+      setSnackbar({ open: true, message: json.message || `${activeIntegration.name} connection verified!`, severity: 'success' });
+      await loadBackendSettings();
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Connection test failed', severity: 'error' });
+    } finally {
+      setTestingIntegration(false);
+    }
+  };
+
+  const handleSaveIntegrationConfig = async () => {
+    if (!activeIntegration) return;
+    setSavingIntegration(true);
+    const updated = integrationsList.map((item) => (item.id === activeIntegration.id ? activeIntegration : item));
     setIntegrationsList(updated);
+    try {
+      localStorage.setItem('traceu_admin_integrations', JSON.stringify(updated));
+    } catch (e) {}
     try {
       await saveSettingsSection('integrations', { items: updated });
       await loadBackendSettings();
-    } catch (e) {}
+      setOpenIntegrationDialog(false);
+      setSnackbar({
+        open: true,
+        message: `${activeIntegration.name} configuration saved (${activeIntegration.connected ? 'Connected' : 'Disconnected'})`,
+        severity: 'success'
+      });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to save integration configuration', severity: 'error' });
+    } finally {
+      setSavingIntegration(false);
+    }
   };
 
   // 7. Security & Data Management State (persisted)
@@ -575,7 +684,12 @@ export default function AdminSettings() {
         }
       }
       if (sections.integrations?.items && Array.isArray(sections.integrations.items)) {
-        setIntegrationsList(sections.integrations.items);
+        setIntegrationsList(
+          DEFAULT_INTEGRATIONS.map((def) => {
+            const match = sections.integrations.items.find((p) => p.id === def.id);
+            return match ? { ...def, ...match, config: { ...def.config, ...(match.config || {}) } } : def;
+          })
+        );
       }
       if (sections.security) {
         setSecuritySettings((prev) => ({ ...prev, ...sections.security }));
@@ -2296,11 +2410,7 @@ export default function AdminSettings() {
                         <Button
                           size="small"
                           variant="outlined"
-                          onClick={() => {
-                            const updated = integrationsList.map((i) => (i.id === item.id ? { ...i, connected: !i.connected } : i));
-                            setIntegrationsList(updated);
-                            setSnackbar({ open: true, message: `${item.name} status updated`, severity: 'info' });
-                          }}
+                          onClick={() => handleOpenIntegrationConfig(item)}
                           sx={{ textTransform: 'none', borderRadius: '8px', borderColor: '#E5E7EB', color: '#374151', fontSize: 12.5 }}
                         >
                           Configure
@@ -2838,6 +2948,347 @@ export default function AdminSettings() {
         </DialogContent>
         <DialogActions sx={{ p: 2, pt: 0 }}>
           <Button onClick={() => setOpenPreviewDialog(false)} sx={{ textTransform: 'none', color: '#530EF0' }}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 4. Configure Integration Dialog */}
+      <Dialog open={openIntegrationDialog} onClose={() => setOpenIntegrationDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700, fontSize: '1.05rem', color: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Box>{activeIntegration ? `Configure ${activeIntegration.name}` : 'Configure Integration'}</Box>
+          {activeIntegration && (
+            <Chip
+              label={activeIntegration.connected ? 'Connected' : 'Disconnected'}
+              size="small"
+              sx={{
+                fontWeight: 600,
+                fontSize: 12,
+                bgcolor: activeIntegration.connected ? 'rgba(16, 185, 129, 0.1)' : '#F3F4F6',
+                color: activeIntegration.connected ? '#10B981' : '#6B7280'
+              }}
+            />
+          )}
+        </DialogTitle>
+        <DialogContent>
+          {activeIntegration && (
+            <Stack spacing={2.2} sx={{ mt: 0.5 }}>
+              <Typography variant="body2" sx={{ color: '#6B7280' }}>
+                {activeIntegration.desc}
+              </Typography>
+
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: '10px',
+                  border: '1px solid #E5E7EB',
+                  bgcolor: '#F9FAFB',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827' }}>
+                    Enable Integration
+                  </Typography>
+                  <Typography variant="caption" sx={{ color: '#6B7280' }}>
+                    Toggle active sync and notifications for {activeIntegration.name}
+                  </Typography>
+                </Box>
+                <Switch
+                  checked={Boolean(activeIntegration.connected)}
+                  onChange={(e) => setActiveIntegration((prev) => ({ ...prev, connected: e.target.checked }))}
+                  color="primary"
+                />
+              </Box>
+
+              {['linkedin', 'naukri', 'indeed'].includes(activeIntegration.id) && (
+                <>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Company / Employer ID"
+                    value={activeIntegration.config?.companyId || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, companyId: e.target.value }
+                      }))
+                    }
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="password"
+                    label="API Key / Access Token"
+                    placeholder="Enter API key"
+                    value={activeIntegration.config?.apiKey || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, apiKey: e.target.value }
+                      }))
+                    }
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.autoPostJobs)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, autoPostJobs: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Automatically publish newly approved jobs"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.syncCandidates)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, syncCandidates: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Import candidate applications automatically"
+                  />
+                </>
+              )}
+
+              {['google', 'ms365'].includes(activeIntegration.id) && (
+                <>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Workspace Domain"
+                    placeholder="e.g. traceu.com"
+                    value={activeIntegration.config?.domain || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, domain: e.target.value }
+                      }))
+                    }
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="OAuth Client ID"
+                    placeholder="Enter OAuth client ID"
+                    value={activeIntegration.config?.clientId || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, clientId: e.target.value }
+                      }))
+                    }
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.syncCalendar)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, syncCalendar: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Sync interview schedules with calendar"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.syncEmail)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, syncEmail: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Sync candidate email threads"
+                  />
+                </>
+              )}
+
+              {activeIntegration.id === 'slack' && (
+                <>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Slack Webhook URL"
+                    placeholder="https://hooks.slack.com/services/..."
+                    value={activeIntegration.config?.webhookUrl || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, webhookUrl: e.target.value }
+                      }))
+                    }
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Default Channel"
+                    placeholder="#hiring-alerts"
+                    value={activeIntegration.config?.channel || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, channel: e.target.value }
+                      }))
+                    }
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.notifyNewApplicant)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, notifyNewApplicant: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Notify channel on new applications"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.notifyStageChange)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, notifyStageChange: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Notify channel on interview & offer updates"
+                  />
+                </>
+              )}
+
+              {activeIntegration.id === 'zoom' && (
+                <>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Zoom Account ID"
+                    value={activeIntegration.config?.accountId || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, accountId: e.target.value }
+                      }))
+                    }
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Client ID"
+                    value={activeIntegration.config?.clientId || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, clientId: e.target.value }
+                      }))
+                    }
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={Boolean(activeIntegration.config?.autoGenerateLinks)}
+                        onChange={(e) =>
+                          setActiveIntegration((prev) => ({
+                            ...prev,
+                            config: { ...prev.config, autoGenerateLinks: e.target.checked }
+                          }))
+                        }
+                      />
+                    }
+                    label="Auto-generate Zoom meeting links for scheduled interviews"
+                  />
+                </>
+              )}
+
+              {activeIntegration.id === 'webhook' && (
+                <>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Endpoint URL"
+                    placeholder="https://api.example.com/webhooks/ats"
+                    value={activeIntegration.config?.webhookUrl || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, webhookUrl: e.target.value }
+                      }))
+                    }
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="password"
+                    label="Signing Secret"
+                    placeholder="whsec_..."
+                    value={activeIntegration.config?.secretKey || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, secretKey: e.target.value }
+                      }))
+                    }
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Subscribed Events"
+                    value={activeIntegration.config?.events || ''}
+                    onChange={(e) =>
+                      setActiveIntegration((prev) => ({
+                        ...prev,
+                        config: { ...prev.config, events: e.target.value }
+                      }))
+                    }
+                  />
+                </>
+              )}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2, pt: 1, justifyContent: 'space-between' }}>
+          <Button
+            variant="outlined"
+            onClick={handleTestIntegration}
+            disabled={testingIntegration || savingIntegration}
+            sx={{ textTransform: 'none', borderRadius: '8px', borderColor: '#E5E7EB', color: '#374151' }}
+          >
+            {testingIntegration ? 'Testing...' : 'Test Connection'}
+          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button onClick={() => setOpenIntegrationDialog(false)} sx={{ textTransform: 'none', color: '#6B7280' }}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSaveIntegrationConfig}
+              disabled={savingIntegration || testingIntegration}
+              sx={{ bgcolor: primaryColor || '#530EF0', color: '#FFF', textTransform: 'none', borderRadius: '8px' }}
+            >
+              {savingIntegration ? 'Saving...' : 'Save Configuration'}
+            </Button>
+          </Stack>
         </DialogActions>
       </Dialog>
 

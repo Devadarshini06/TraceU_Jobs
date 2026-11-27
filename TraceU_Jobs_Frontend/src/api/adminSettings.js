@@ -68,3 +68,10 @@ export async function deleteWorkspaceUser(id) {
   });
 }
 
+export async function testIntegrationConnection(id, payload) {
+  return request(`/integrations/${id}/test`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+

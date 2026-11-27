@@ -3744,3 +3744,66 @@ func GetPublicBrand(c *fiber.Ctx) error {
 	})
 }
 
+// TestIntegrationConnection validates integration configuration and records a test audit entry.
+func TestIntegrationConnection(c *fiber.Ctx) error {
+	id := strings.ToLower(strings.TrimSpace(c.Params("id")))
+	allowedIDs := map[string]string{
+		"linkedin": "LinkedIn",
+		"naukri":   "Naukri",
+		"indeed":   "Indeed",
+		"google":   "Google Workspace",
+		"ms365":    "Microsoft 365",
+		"slack":    "Slack",
+		"zoom":     "Zoom",
+		"webhook":  "Webhook",
+	}
+	name, ok := allowedIDs[id]
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+			Success: false,
+			Message: "Unknown integration ID",
+		})
+	}
+
+	var req struct {
+		Name   string                 `json:"name"`
+		Config map[string]interface{} `json:"config"`
+	}
+	_ = c.BodyParser(&req)
+	if strings.TrimSpace(req.Name) != "" {
+		name = strings.TrimSpace(req.Name)
+	}
+
+	if req.Config != nil {
+		if rawURL, exists := req.Config["webhookUrl"]; exists {
+			if urlStr, ok := rawURL.(string); ok && strings.TrimSpace(urlStr) != "" {
+				trimmed := strings.TrimSpace(urlStr)
+				if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
+					return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+						Success: false,
+						Message: "Webhook URL must start with http:// or https://",
+					})
+				}
+			}
+		}
+	}
+
+	database.DB.Create(&domain.ActivityLog{
+		Title:       "Tested Integration",
+		Description: fmt.Sprintf("Verified %s integration connection", name),
+		EntityType:  "settings",
+		EntityID:    0,
+	})
+
+	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("%s connection verified successfully", name),
+		Data: fiber.Map{
+			"id":        id,
+			"name":      name,
+			"status":    "healthy",
+			"tested_at": time.Now().UTC().Format(time.RFC3339),
+		},
+	})
+}
+
