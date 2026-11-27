@@ -47,10 +47,12 @@ import LinkedinFilled from '@ant-design/icons/LinkedinFilled';
 import MailOutlined from '@ant-design/icons/MailOutlined';
 import MoreOutlined from '@ant-design/icons/MoreOutlined';
 import PhoneOutlined from '@ant-design/icons/PhoneOutlined';
+import PlusOutlined from '@ant-design/icons/PlusOutlined';
 import ReadOutlined from '@ant-design/icons/ReadOutlined';
 import SearchOutlined from '@ant-design/icons/SearchOutlined';
 import TeamOutlined from '@ant-design/icons/TeamOutlined';
 import TrophyOutlined from '@ant-design/icons/TrophyOutlined';
+import UploadOutlined from '@ant-design/icons/UploadOutlined';
 import UserAddOutlined from '@ant-design/icons/UserAddOutlined';
 import UserOutlined from '@ant-design/icons/UserOutlined';
 
@@ -60,7 +62,8 @@ import avatar3 from 'assets/images/users/avatar-3.png';
 import avatar4 from 'assets/images/users/avatar-4.png';
 import avatar5 from 'assets/images/users/avatar-5.png';
 import { getInternshipApplications } from 'api/adminInternships';
-import { scheduleInterview, updateApplicationStage } from 'api/adminApplications';
+import { createApplication, scheduleInterview, updateApplicationStage, uploadApplicationResume } from 'api/adminApplications';
+import { validateEmail } from 'utils/emailValidation';
 import FullScreenResumeDialog from 'components/FullScreenResumeDialog';
 
 const AVATARS = [avatar1, avatar2, avatar3, avatar4, avatar5];
@@ -179,6 +182,19 @@ export default function AdminInternshipApplications() {
   const [interviewDate, setInterviewDate] = useState('');
   const [interviewNotes, setInterviewNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [newApplicant, setNewApplicant] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    location: 'Bengaluru',
+    experience: 'Fresher',
+    skills: '',
+    linkedin: '',
+    about: ''
+  });
+  const [resumeFile, setResumeFile] = useState(null);
+  const [addErrors, setAddErrors] = useState({});
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
   const loadData = async () => {
@@ -282,6 +298,70 @@ export default function AdminInternshipApplications() {
     }
   };
 
+  const resetAddApplicantForm = () => {
+    setNewApplicant({
+      name: '',
+      email: '',
+      phone: '',
+      location: 'Bengaluru',
+      experience: 'Fresher',
+      skills: '',
+      linkedin: '',
+      about: ''
+    });
+    setResumeFile(null);
+    setAddErrors({});
+  };
+
+  const handleAddApplicant = async () => {
+    const errors = {};
+    if (!newApplicant.name.trim()) {
+      errors.name = 'Full Name is required';
+    } else if (newApplicant.name.trim().length < 2) {
+      errors.name = 'Full Name must be at least 2 characters';
+    }
+    const emailErr = validateEmail(newApplicant.email);
+    if (emailErr) errors.email = emailErr;
+    if (!newApplicant.phone.trim()) errors.phone = 'Phone Number is required';
+    if (!newApplicant.location.trim()) errors.location = 'Location is required';
+    if (!newApplicant.experience.trim()) errors.experience = 'Experience is required';
+    if (!newApplicant.skills.trim()) errors.skills = 'Skills are required';
+    if (!resumeFile) errors.resume = 'Resume file (PDF/DOC/DOCX) is required';
+
+    if (Object.keys(errors).length > 0) {
+      setAddErrors(errors);
+      setSnackbar({ open: true, message: 'Please fill all required fields and upload a resume', severity: 'error' });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const res = await createApplication({
+        candidateName: newApplicant.name.trim(),
+        candidateEmail: newApplicant.email.trim(),
+        phone: newApplicant.phone.trim(),
+        location: newApplicant.location.trim(),
+        experience: newApplicant.experience.trim(),
+        skills: newApplicant.skills.trim(),
+        jobId: Number(id),
+        jobTitle: internship?.title || 'Internship',
+        stage: 'applied'
+      });
+      const createdId = res?.data?.id || res?.id;
+      if (createdId && resumeFile) {
+        await uploadApplicationResume(createdId, resumeFile);
+      }
+      await loadData();
+      setAddDialogOpen(false);
+      resetAddApplicantForm();
+      setSnackbar({ open: true, message: `${newApplicant.name.trim()} added as applicant!`, severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to add applicant', severity: 'error' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <Box sx={{ width: '100%', minHeight: '100%', pb: 5 }}>
       {/* Header */}
@@ -310,6 +390,24 @@ export default function AdminInternshipApplications() {
               </Typography>
             )}
           </Box>
+          <Button
+            variant="contained"
+            startIcon={<PlusOutlined />}
+            onClick={() => setAddDialogOpen(true)}
+            sx={{
+              bgcolor: '#530EF0',
+              color: '#FFF',
+              fontWeight: 600,
+              borderRadius: '8px',
+              height: 40,
+              px: 2.2,
+              textTransform: 'none',
+              whiteSpace: 'nowrap',
+              '&:hover': { bgcolor: '#430bc2' }
+            }}
+          >
+            Add Applicant
+          </Button>
         </Stack>
       </Box>
 
@@ -714,6 +812,170 @@ export default function AdminInternshipApplications() {
           <Button onClick={() => setInterviewOpen(false)} sx={{ textTransform: 'none' }}>Cancel</Button>
           <Button variant="contained" disabled={submitting} onClick={handleScheduleInterview} sx={{ bgcolor: '#530EF0', textTransform: 'none' }}>
             {submitting ? 'Scheduling...' : 'Confirm'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Applicant Dialog */}
+      <Dialog
+        open={addDialogOpen}
+        onClose={() => {
+          setAddDialogOpen(false);
+          resetAddApplicantForm();
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>+ Add Applicant to {internship?.title || 'Internship'}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Full Name"
+              required
+              value={newApplicant.name}
+              onChange={(e) => {
+                setNewApplicant({ ...newApplicant, name: e.target.value });
+                if (addErrors.name) setAddErrors({ ...addErrors, name: '' });
+              }}
+              error={Boolean(addErrors.name)}
+              helperText={addErrors.name}
+            />
+            <TextField
+              fullWidth
+              size="small"
+              type="email"
+              label="Email Address"
+              required
+              value={newApplicant.email}
+              onChange={(e) => {
+                setNewApplicant({ ...newApplicant, email: e.target.value });
+                if (addErrors.email) setAddErrors({ ...addErrors, email: '' });
+              }}
+              error={Boolean(addErrors.email)}
+              helperText={addErrors.email}
+            />
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 6 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Phone Number"
+                  required
+                  value={newApplicant.phone}
+                  onChange={(e) => {
+                    setNewApplicant({ ...newApplicant, phone: e.target.value });
+                    if (addErrors.phone) setAddErrors({ ...addErrors, phone: '' });
+                  }}
+                  error={Boolean(addErrors.phone)}
+                  helperText={addErrors.phone}
+                />
+              </Grid>
+              <Grid size={{ xs: 6 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Location"
+                  required
+                  value={newApplicant.location}
+                  onChange={(e) => {
+                    setNewApplicant({ ...newApplicant, location: e.target.value });
+                    if (addErrors.location) setAddErrors({ ...addErrors, location: '' });
+                  }}
+                  error={Boolean(addErrors.location)}
+                  helperText={addErrors.location}
+                />
+              </Grid>
+            </Grid>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 6 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Experience"
+                  required
+                  value={newApplicant.experience}
+                  onChange={(e) => {
+                    setNewApplicant({ ...newApplicant, experience: e.target.value });
+                    if (addErrors.experience) setAddErrors({ ...addErrors, experience: '' });
+                  }}
+                  error={Boolean(addErrors.experience)}
+                  helperText={addErrors.experience}
+                />
+              </Grid>
+              <Grid size={{ xs: 6 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Skills (comma separated)"
+                  required
+                  placeholder="React, JavaScript, HTML"
+                  value={newApplicant.skills}
+                  onChange={(e) => {
+                    setNewApplicant({ ...newApplicant, skills: e.target.value });
+                    if (addErrors.skills) setAddErrors({ ...addErrors, skills: '' });
+                  }}
+                  error={Boolean(addErrors.skills)}
+                  helperText={addErrors.skills}
+                />
+              </Grid>
+            </Grid>
+            <Box
+              sx={{
+                p: 2,
+                border: `1.5px dashed ${addErrors.resume ? '#EF4444' : '#D1D5DB'}`,
+                borderRadius: '10px',
+                bgcolor: '#F9FAFB',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 2
+              }}
+            >
+              <Box>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827' }}>
+                  Resume (PDF / DOC / DOCX) *
+                </Typography>
+                <Typography variant="caption" sx={{ color: addErrors.resume ? '#EF4444' : '#6B7280' }}>
+                  {resumeFile ? `${resumeFile.name} (${(resumeFile.size / 1024).toFixed(0)} KB)` : addErrors.resume || 'Upload applicant resume'}
+                </Typography>
+              </Box>
+              <Button component="label" variant="outlined" size="small" startIcon={<UploadOutlined />} sx={{ textTransform: 'none', flexShrink: 0 }}>
+                {resumeFile ? 'Change File' : 'Upload Resume'}
+                <input
+                  type="file"
+                  hidden
+                  accept=".pdf,.doc,.docx"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setResumeFile(file);
+                      if (addErrors.resume) setAddErrors({ ...addErrors, resume: '' });
+                    }
+                  }}
+                />
+              </Button>
+            </Box>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button
+            onClick={() => {
+              setAddDialogOpen(false);
+              resetAddApplicantForm();
+            }}
+            sx={{ textTransform: 'none', color: '#6B7280' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={submitting}
+            onClick={handleAddApplicant}
+            sx={{ bgcolor: '#530EF0', textTransform: 'none', fontWeight: 600, '&:hover': { bgcolor: '#430bc2' } }}
+          >
+            {submitting ? 'Adding...' : 'Add Applicant'}
           </Button>
         </DialogActions>
       </Dialog>
