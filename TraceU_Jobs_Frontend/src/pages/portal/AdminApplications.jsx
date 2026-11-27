@@ -47,6 +47,7 @@ import {
   scheduleInterview
 } from 'api/adminApplications';
 import { getJobs } from 'api/adminJobs';
+import { validateEmail } from 'utils/emailValidation';
 
 // icons
 import SolutionOutlined from '@ant-design/icons/SolutionOutlined';
@@ -302,7 +303,7 @@ function mapBackendApplication(item) {
     resumeName: cand?.resume_name || '',
     resumeSize: cand?.resume_size || '',
     resumeUrl: cand?.resume_url || '',
-    matchScore: Number(item?.match_score || 80),
+    matchScore: cand?.resume_name ? Number(item?.match_score || 0) : 0,
     stage: APP_STAGE_LABELS[rawStage] || 'Applied',
     appliedAt: item?.applied_at,
     appliedOn,
@@ -366,6 +367,11 @@ export default function AdminApplications() {
   const [newCandidateName, setNewCandidateName] = useState('');
   const [newJobTitle, setNewJobTitle] = useState('Software Engineer');
   const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newLocation, setNewLocation] = useState('Bengaluru');
+  const [newExperience, setNewExperience] = useState('2+ yrs');
+  const [newSkills, setNewSkills] = useState('');
+  const [newResumeFile, setNewResumeFile] = useState(null);
   const [appErrors, setAppErrors] = useState({});
 
   useEffect(() => {
@@ -472,20 +478,36 @@ export default function AdminApplications() {
 
   const handleAddSubmit = async () => {
     const errors = {};
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!newCandidateName.trim()) {
       errors.name = 'Candidate Name is required';
     } else if (newCandidateName.trim().length < 2) {
       errors.name = 'Candidate Name must be at least 2 characters';
     }
 
-    if (newEmail.trim() && !emailRegex.test(newEmail.trim())) {
-      errors.email = 'Must be a valid email address';
+    const emailErr = validateEmail(newEmail);
+    if (emailErr) {
+      errors.email = emailErr;
+    }
+
+    if (!newPhone.trim() || newPhone.replace(/\D/g, '').length < 7) {
+      errors.phone = 'Valid Phone Number is required';
+    }
+
+    const skillsArr = newSkills
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (skillsArr.length < 2) {
+      errors.skills = 'Enter at least 2 comma-separated skills for ATS matching';
+    }
+
+    if (!newResumeFile) {
+      errors.resume = 'Resume file (PDF/DOC/DOCX) is required for ATS scoring';
     }
 
     if (Object.keys(errors).length > 0) {
       setAppErrors(errors);
-      setSnackbar({ open: true, message: 'Please correct the validation errors', severity: 'warning' });
+      setSnackbar({ open: true, message: 'Please fill all required candidate details and attach a resume', severity: 'warning' });
       return;
     }
 
@@ -494,16 +516,24 @@ export default function AdminApplications() {
       const res = await createApplication({
         candidateName: newCandidateName.trim(),
         candidateEmail: newEmail.trim(),
+        phone: newPhone.trim(),
+        location: newLocation,
+        experience: newExperience.trim() || '2+ yrs',
+        skills: skillsArr.join(', '),
         jobTitle: newJobTitle
       });
-      const created = mapBackendApplication(res.data);
+      const uploadRes = await uploadApplicationResume(res.data.id, newResumeFile);
+      const created = mapBackendApplication(uploadRes.data);
       setApplications((prev) => [created, ...prev]);
       setSelectedApp(created);
       setAddDialogOpen(false);
       setNewCandidateName('');
       setNewEmail('');
+      setNewPhone('');
+      setNewSkills('');
+      setNewResumeFile(null);
       setAppErrors({});
-      setSnackbar({ open: true, message: `Application created for ${created.name}!`, severity: 'success' });
+      setSnackbar({ open: true, message: `Application created for ${created.name} (ATS Score: ${created.matchScore}%)!`, severity: 'success' });
     } catch (err) {
       setSnackbar({ open: true, message: err.message || 'Failed to create application', severity: 'error' });
     } finally {
@@ -1239,7 +1269,7 @@ export default function AdminApplications() {
                           </Stack>
                         </TableCell>
                         <TableCell align="center" sx={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
-                          {getMatchScoreBadge(app.matchScore)}
+                          {app.matchScore > 0 ? getMatchScoreBadge(app.matchScore) : <Chip label="No Resume" size="small" sx={{ fontSize: 10.5, bgcolor: '#f1f5f9', color: '#64748b' }} />}
                         </TableCell>
                         <TableCell sx={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{getStageChip(app.stage)}</TableCell>
                         <TableCell sx={{ fontSize: 12, color: '#64748b', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{app.appliedOn}</TableCell>
@@ -1291,7 +1321,11 @@ export default function AdminApplications() {
                       <Typography sx={{ fontWeight: 800, fontSize: 17, color: '#111827' }}>
                         {selectedApp.name}
                       </Typography>
-                      <Chip label={`${selectedApp.matchScore}% Match`} size="small" sx={{ bgcolor: '#ecfdf5', color: '#059669', fontWeight: 700, fontSize: 10.5, height: 20 }} />
+                      <Chip
+                        label={selectedApp.matchScore > 0 ? `${selectedApp.matchScore}% Match` : 'Pending Resume'}
+                        size="small"
+                        sx={{ bgcolor: selectedApp.matchScore > 0 ? '#ecfdf5' : '#f1f5f9', color: selectedApp.matchScore > 0 ? '#059669' : '#64748b', fontWeight: 700, fontSize: 10.5, height: 20 }}
+                      />
                     </Stack>
                     <Typography sx={{ fontSize: 13, color: '#4b5563', fontWeight: 600 }}>
                       {selectedApp.role}
@@ -1620,42 +1654,127 @@ export default function AdminApplications() {
         <DialogTitle sx={{ fontWeight: 800, fontSize: 18, color: '#111827' }}>Add Application</DialogTitle>
         <DialogContent dividers sx={{ p: 3 }}>
           <Stack spacing={2}>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  required
+                  label="Candidate Name *"
+                  placeholder="e.g. Vikram Sharma"
+                  value={newCandidateName}
+                  onChange={(e) => {
+                    setNewCandidateName(e.target.value);
+                    if (appErrors.name) setAppErrors({ ...appErrors, name: '' });
+                  }}
+                  error={Boolean(appErrors.name)}
+                  helperText={appErrors.name}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  required
+                  type="email"
+                  label="Candidate Email *"
+                  placeholder="candidate@example.com"
+                  value={newEmail}
+                  onChange={(e) => {
+                    setNewEmail(e.target.value);
+                    if (appErrors.email) setAppErrors({ ...appErrors, email: '' });
+                  }}
+                  error={Boolean(appErrors.email)}
+                  helperText={appErrors.email}
+                />
+              </Grid>
+            </Grid>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  required
+                  label="Phone Number *"
+                  placeholder="+91 98765 43210"
+                  value={newPhone}
+                  onChange={(e) => {
+                    setNewPhone(e.target.value);
+                    if (appErrors.phone) setAppErrors({ ...appErrors, phone: '' });
+                  }}
+                  error={Boolean(appErrors.phone)}
+                  helperText={appErrors.phone}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField fullWidth select label="Applied Job Title *" value={newJobTitle} onChange={(e) => setNewJobTitle(e.target.value)}>
+                  {(availableJobs.length > 0
+                    ? availableJobs.map((j) => j.title)
+                    : ['Software Engineer', 'Frontend Developer', 'Data Analyst', 'Backend Developer', 'DevOps Engineer']
+                  ).map((title) => (
+                    <MenuItem key={title} value={title}>
+                      {title}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+            </Grid>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField fullWidth select label="Location *" value={newLocation} onChange={(e) => setNewLocation(e.target.value)}>
+                  <MenuItem value="Bengaluru">Bengaluru</MenuItem>
+                  <MenuItem value="Chennai">Chennai</MenuItem>
+                  <MenuItem value="Hyderabad">Hyderabad</MenuItem>
+                  <MenuItem value="Pune">Pune</MenuItem>
+                  <MenuItem value="Mumbai">Mumbai</MenuItem>
+                  <MenuItem value="Remote">Remote</MenuItem>
+                </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  required
+                  label="Experience *"
+                  placeholder="e.g. 2+ yrs"
+                  value={newExperience}
+                  onChange={(e) => setNewExperience(e.target.value)}
+                />
+              </Grid>
+            </Grid>
             <TextField
               fullWidth
-              label="Candidate Name *"
-              placeholder="e.g. Vikram Sharma"
-              value={newCandidateName}
-              onChange={(e) => {
-                setNewCandidateName(e.target.value);
-                if (appErrors.name) setAppErrors({ ...appErrors, name: '' });
-              }}
-              error={Boolean(appErrors.name)}
-              helperText={appErrors.name}
               required
-            />
-            <TextField
-              fullWidth
-              type="email"
-              label="Candidate Email"
-              placeholder="candidate@email.com"
-              value={newEmail}
+              label="Skills (minimum 2, comma-separated) *"
+              placeholder="e.g. React, Node.js, TypeScript, SQL"
+              value={newSkills}
               onChange={(e) => {
-                setNewEmail(e.target.value);
-                if (appErrors.email) setAppErrors({ ...appErrors, email: '' });
+                setNewSkills(e.target.value);
+                if (appErrors.skills) setAppErrors({ ...appErrors, skills: '' });
               }}
-              error={Boolean(appErrors.email)}
-              helperText={appErrors.email}
+              error={Boolean(appErrors.skills)}
+              helperText={appErrors.skills}
             />
-            <TextField fullWidth select label="Applied Job Title" value={newJobTitle} onChange={(e) => setNewJobTitle(e.target.value)}>
-              {(availableJobs.length > 0
-                ? availableJobs.map((j) => j.title)
-                : ['Software Engineer', 'Frontend Developer', 'Data Analyst', 'Backend Developer', 'DevOps Engineer']
-              ).map((title) => (
-                <MenuItem key={title} value={title}>
-                  {title}
-                </MenuItem>
-              ))}
-            </TextField>
+            <Box>
+              <Button
+                variant="outlined"
+                component="label"
+                fullWidth
+                startIcon={<UploadOutlined />}
+                color={appErrors.resume ? 'error' : 'primary'}
+                sx={{ textTransform: 'none', borderRadius: '8px', py: 1.25, fontWeight: 600 }}
+              >
+                {newResumeFile ? `Resume: ${newResumeFile.name}` : 'Attach Resume (PDF / DOC / DOCX) *'}
+                <input
+                  type="file"
+                  hidden
+                  accept=".pdf,.doc,.docx"
+                  onChange={(e) => {
+                    setNewResumeFile(e.target.files?.[0] || null);
+                    if (appErrors.resume) setAppErrors({ ...appErrors, resume: '' });
+                  }}
+                />
+              </Button>
+              {appErrors.resume && (
+                <Typography sx={{ fontSize: 11.5, color: '#d32f2f', mt: 0.5, ml: 1.5 }}>{appErrors.resume}</Typography>
+              )}
+            </Box>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>

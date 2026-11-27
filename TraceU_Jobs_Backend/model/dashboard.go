@@ -176,6 +176,10 @@ type CreateApplicationRequest struct {
 	CandidateID    uint   `json:"candidate_id"`
 	CandidateName  string `json:"candidate_name"`
 	CandidateEmail string `json:"candidate_email"`
+	Phone          string `json:"phone"`
+	Location       string `json:"location"`
+	Experience     string `json:"experience"`
+	Skills         string `json:"skills"`
 	JobID          uint   `json:"job_id"`
 	JobTitle       string `json:"job_title"`
 	Stage          string `json:"stage"`

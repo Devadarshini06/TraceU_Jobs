@@ -48,6 +48,7 @@ import {
   uploadCandidateResume,
   importCandidates
 } from 'api/adminCandidates';
+import { validateEmail } from 'utils/emailValidation';
 
 // icons
 import TeamOutlined from '@ant-design/icons/TeamOutlined';
@@ -576,7 +577,6 @@ export default function AdminCandidates() {
 
   const handleAddSubmit = async () => {
     const errors = {};
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const urlRegex = /^https?:\/\/.+/i;
 
     if (!newName.trim()) {
@@ -585,10 +585,9 @@ export default function AdminCandidates() {
       errors.name = 'Full Name must be at least 2 characters';
     }
 
-    if (!newEmail.trim()) {
-      errors.email = 'Email Address is required';
-    } else if (!emailRegex.test(newEmail.trim())) {
-      errors.email = 'Must be a valid email address';
+    const emailErr = validateEmail(newEmail);
+    if (emailErr) {
+      errors.email = emailErr;
     }
 
     const phoneDigits = newPhone.replace(/\D/g, '');

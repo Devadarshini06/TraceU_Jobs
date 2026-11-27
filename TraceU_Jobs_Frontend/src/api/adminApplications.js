@@ -51,13 +51,29 @@ export async function getApplications(params = {}) {
   return request(`/applications${query}`, { method: 'GET' });
 }
 
-export async function createApplication({ candidateId, candidateName, candidateEmail, jobId, jobTitle, stage, matchScore }) {
+export async function createApplication({
+  candidateId,
+  candidateName,
+  candidateEmail,
+  phone,
+  location,
+  experience,
+  skills,
+  jobId,
+  jobTitle,
+  stage,
+  matchScore
+}) {
   return request('/applications', {
     method: 'POST',
     body: JSON.stringify({
       ...(candidateId ? { candidate_id: candidateId } : {}),
       candidate_name: candidateName,
       candidate_email: candidateEmail,
+      ...(phone ? { phone } : {}),
+      ...(location ? { location } : {}),
+      ...(experience ? { experience } : {}),
+      ...(skills ? { skills } : {}),
       ...(jobId ? { job_id: jobId } : {}),
       job_title: jobTitle,
       ...(stage ? { stage } : {}),

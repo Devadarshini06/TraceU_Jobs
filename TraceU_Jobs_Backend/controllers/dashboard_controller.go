@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"math"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1105,6 +1106,65 @@ func GetApplications(c *fiber.Ctx) error {
 	})
 }
 
+func isValidEmailAddress(raw string) bool {
+	email := strings.TrimSpace(strings.ToLower(raw))
+	if email == "" {
+		return false
+	}
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Address != email {
+		return false
+	}
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 || !strings.Contains(parts[1], ".") {
+		return false
+	}
+	domainParts := strings.Split(parts[1], ".")
+	tld := domainParts[len(domainParts)-1]
+	if len(tld) < 2 {
+		return false
+	}
+	switch tld {
+	case "cmo", "con", "ocm", "comm", "xom", "vom", "coom":
+		return false
+	}
+	return true
+}
+
+func computeATSMatchScore(cand domain.Candidate, job domain.Job) int {
+	if strings.TrimSpace(cand.ResumeName) == "" {
+		return 0
+	}
+	reqText := strings.ToLower(job.Requirements + " " + job.Title + " " + job.Department)
+	skillTokens := strings.Split(cand.Skills, ",")
+	matched := 0
+	total := 0
+	for _, raw := range skillTokens {
+		s := strings.TrimSpace(strings.ToLower(raw))
+		if s == "" {
+			continue
+		}
+		total++
+		if strings.Contains(reqText, s) {
+			matched++
+		}
+	}
+	score := 65
+	if total > 0 {
+		score = 55 + int(math.Round(float64(matched)/float64(total)*40.0))
+	}
+	if strings.TrimSpace(cand.Experience) != "" {
+		score += 5
+	}
+	if score > 98 {
+		score = 98
+	}
+	if score < 40 {
+		score = 40
+	}
+	return score
+}
+
 // CreateApplication creates a new application, linking or creating Candidate and Job if needed.
 func CreateApplication(c *fiber.Ctx) error {
 	var req model.CreateApplicationRequest
@@ -1127,22 +1187,36 @@ func CreateApplication(c *fiber.Ctx) error {
 	} else {
 		name := strings.TrimSpace(req.CandidateName)
 		email := strings.TrimSpace(strings.ToLower(req.CandidateEmail))
-		if name == "" {
+		if name == "" || email == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
 				Success: false,
-				Message: "Candidate name is required",
+				Message: "Candidate name and email are required",
 			})
 		}
-		if email == "" {
-			slug := strings.ToLower(strings.ReplaceAll(name, " ", "."))
-			email = fmt.Sprintf("%s.%d@applicant.traceu.in", slug, time.Now().Unix()%100000)
+		if !isValidEmailAddress(email) {
+			return c.Status(fiber.StatusBadRequest).JSON(model.APIResponse{
+				Success: false,
+				Message: "Please provide a valid email address",
+			})
 		}
 		if err := database.DB.Where("LOWER(email) = ?", email).First(&cand).Error; err != nil {
+			loc := strings.TrimSpace(req.Location)
+			if loc == "" {
+				loc = "Bengaluru"
+			}
+			exp := strings.TrimSpace(req.Experience)
+			if exp == "" {
+				exp = "2+ yrs"
+			}
 			cand = domain.Candidate{
-				Name:   name,
-				Email:  email,
-				Source: "Direct Application",
-				Status: "in_process",
+				Name:       name,
+				Email:      email,
+				Phone:      strings.TrimSpace(req.Phone),
+				Location:   loc,
+				Experience: exp,
+				Skills:     strings.TrimSpace(req.Skills),
+				Source:     "Direct Application",
+				Status:     "in_process",
 			}
 			if createErr := database.DB.Create(&cand).Error; createErr != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(model.APIResponse{
@@ -1150,6 +1224,24 @@ func CreateApplication(c *fiber.Ctx) error {
 					Message: "Failed to create candidate for application",
 					Error:   createErr.Error(),
 				})
+			}
+		} else {
+			updates := map[string]interface{}{}
+			if p := strings.TrimSpace(req.Phone); p != "" {
+				updates["phone"] = p
+			}
+			if l := strings.TrimSpace(req.Location); l != "" {
+				updates["location"] = l
+			}
+			if e := strings.TrimSpace(req.Experience); e != "" {
+				updates["experience"] = e
+			}
+			if s := strings.TrimSpace(req.Skills); s != "" {
+				updates["skills"] = s
+			}
+			if len(updates) > 0 {
+				database.DB.Model(&cand).Updates(updates)
+				database.DB.First(&cand, cand.ID)
 			}
 		}
 	}
@@ -1194,7 +1286,7 @@ func CreateApplication(c *fiber.Ctx) error {
 	}
 	matchScore := req.MatchScore
 	if matchScore <= 0 || matchScore > 100 {
-		matchScore = 84
+		matchScore = computeATSMatchScore(cand, job)
 	}
 
 	app := domain.Application{
@@ -1213,6 +1305,9 @@ func CreateApplication(c *fiber.Ctx) error {
 	}
 
 	database.DB.Preload("Candidate").Preload("Job").First(&app, app.ID)
+	score := computeATSMatchScore(app.Candidate, app.Job)
+	database.DB.Model(&app).Update("match_score", score)
+	app.MatchScore = score
 
 	database.DB.Create(&domain.ActivityLog{
 		Title:       "New application received",
@@ -1367,6 +1462,9 @@ func UploadApplicationResume(c *fiber.Ctx) error {
 	})
 
 	database.DB.Preload("Candidate").Preload("Job").First(&app, app.ID)
+	score := computeATSMatchScore(app.Candidate, app.Job)
+	database.DB.Model(&app).Update("match_score", score)
+	app.MatchScore = score
 
 	return c.Status(fiber.StatusOK).JSON(model.APIResponse{
 		Success: true,

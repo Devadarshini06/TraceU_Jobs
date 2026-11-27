@@ -31,6 +31,7 @@ import UserOutlined from '@ant-design/icons/UserOutlined';
 // project imports
 import { GoogleIcon, LinkedInIcon } from 'components/icons/SocialIcons';
 import { adminForgotPassword, adminLogin, adminOAuthLogin } from 'api/adminAuth';
+import { validateEmail } from 'utils/emailValidation';
 
 // ==============================|| TRACEU LOGIN CARD ||============================== //
 
@@ -101,6 +102,12 @@ export default function TraceULoginCard({ portalType }) {
 
     if (!email.trim() || !password) {
       setError('Please enter both email address and password.');
+      return;
+    }
+
+    const emailErr = validateEmail(email);
+    if (emailErr) {
+      setError(emailErr);
       return;
     }
 
