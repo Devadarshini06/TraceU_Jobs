@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import getGreeting from 'utils/getGreeting';
+import { getAdminDashboard } from 'api/adminDashboard';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -63,28 +64,80 @@ export default function AdminDashboard() {
   // Period filter state
   const [periodAnchor, setPeriodAnchor] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState('Last 30 days');
+  const [dashboardData, setDashboardData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Quick Action Dialog state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogTitle, setDialogTitle] = useState('');
-  const [dialogType, setDialogType] = useState('');
-
-  const handleOpenDialog = (title, type) => {
-    setDialogTitle(title);
-    setDialogType(type);
-    setDialogOpen(true);
+  const periodToDays = (period) => {
+    switch (period) {
+      case 'Last 7 days':
+        return 7;
+      case 'Last 90 days':
+        return 90;
+      case 'All time':
+        return 365;
+      default:
+        return 30;
+    }
   };
 
-  const handleCloseDialog = () => {
-    setDialogOpen(false);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    getAdminDashboard(periodToDays(selectedPeriod))
+      .then((data) => {
+        if (active) setDashboardData(data);
+      })
+      .catch(() => {
+        if (active) setDashboardData(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedPeriod]);
+
+  const summary = dashboardData?.summary || {};
+  const insights = dashboardData?.insights || {};
+  const avatars = [avatar1, avatar2, avatar3, avatar4, avatar5];
+
+  const formatRelTime = (isoStr) => {
+    if (!isoStr) return '—';
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return '—';
+    const diffMs = Date.now() - d.getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
   };
 
-  // Top 6 KPI stats
+  const formatScheduleTime = (isoStr) => {
+    if (!isoStr) return '—';
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  const stageStyleMap = {
+    applied: { label: 'Applied', color: '#6929e2', bg: '#f3edff' },
+    screening: { label: 'Screening', color: '#38bdf8', bg: '#f0f9ff' },
+    shortlisted: { label: 'Shortlisted', color: '#0d9488', bg: '#f0fdfa' },
+    interview: { label: 'Interview', color: '#d97706', bg: '#fffbeb' },
+    selected: { label: 'Selected', color: '#ec4899', bg: '#fdf2f8' },
+    offered: { label: 'Offered', color: '#8b5cf6', bg: '#f5f3ff' },
+    hired: { label: 'Hired', color: '#10b981', bg: '#ecfdf5' }
+  };
+
+  // Top 6 KPI stats (from backend summary)
   const kpiStats = [
     {
       title: 'Open Requisitions',
-      count: '24',
-      change: '+12%',
+      count: String(summary.open_requisitions ?? 0),
       subtitle: 'Across all departments',
       icon: <FileTextOutlined style={{ fontSize: 18 }} />,
       iconColor: '#6929e2',
@@ -92,8 +145,7 @@ export default function AdminDashboard() {
     },
     {
       title: 'Total Applications',
-      count: '486',
-      change: '+18%',
+      count: String(summary.total_applications ?? 0),
       subtitle: 'Applications received',
       icon: <TeamOutlined style={{ fontSize: 18 }} />,
       iconColor: '#2563eb',
@@ -101,8 +153,7 @@ export default function AdminDashboard() {
     },
     {
       title: 'Shortlisted',
-      count: '73',
-      change: '+22%',
+      count: String(summary.shortlisted ?? 0),
       subtitle: 'Candidates shortlisted',
       icon: <UserOutlined style={{ fontSize: 18 }} />,
       iconColor: '#ea580c',
@@ -110,8 +161,7 @@ export default function AdminDashboard() {
     },
     {
       title: 'Interviews',
-      count: '32',
-      change: '+27%',
+      count: String(summary.interviews ?? 0),
       subtitle: 'Scheduled or in progress',
       icon: <CalendarOutlined style={{ fontSize: 18 }} />,
       iconColor: '#7c3aed',
@@ -119,8 +169,7 @@ export default function AdminDashboard() {
     },
     {
       title: 'Offers',
-      count: '8',
-      change: '+14%',
+      count: String(summary.offers ?? 0),
       subtitle: 'Offers sent',
       icon: <CheckCircleOutlined style={{ fontSize: 18 }} />,
       iconColor: '#059669',
@@ -128,8 +177,7 @@ export default function AdminDashboard() {
     },
     {
       title: 'Internships',
-      count: '24',
-      change: '+33%',
+      count: String(summary.internships ?? 0),
       subtitle: 'Active internships',
       icon: <ReadOutlined style={{ fontSize: 18 }} />,
       iconColor: '#db2777',
@@ -137,82 +185,89 @@ export default function AdminDashboard() {
     }
   ];
 
-  // Pipeline stages
-  const pipelineStages = [
-    { label: 'Applied', count: 486, pct: '100%', color: '#6929e2' },
-    { label: 'Screening', count: 340, pct: '70%', color: '#38bdf8' },
-    { label: 'Shortlisted', count: 187, pct: '38%', color: '#14b8a6' },
-    { label: 'Interview', count: 96, pct: '20%', color: '#f59e0b' },
-    { label: 'Selected', count: 42, pct: '9%', color: '#ec4899' },
-    { label: 'Offered', count: 18, pct: '4%', color: '#8b5cf6' },
-    { label: 'Hired', count: 5, pct: '1%', color: '#10b981' }
-  ];
+  // Pipeline stages (from backend)
+  const pipelineStages = (dashboardData?.pipeline_stages || []).map((s) => {
+    const key = String(s.stage || '').toLowerCase();
+    const meta = stageStyleMap[key] || { label: s.stage, color: '#6929e2', bg: '#f3edff' };
+    return {
+      label: meta.label,
+      count: s.count ?? 0,
+      pct: `${Math.min(100, Math.max(0, Number(s.percentage) || 0))}%`,
+      color: meta.color
+    };
+  });
 
-  // Recent applications
-  const recentApplications = [
-    { name: 'Priya Sharma', avatar: avatar1, role: 'Software Engineer', stage: 'Screening', stageColor: '#38bdf8', stageBg: '#f0f9ff', time: '2h ago' },
-    { name: 'Rahul Mehta', avatar: avatar2, role: 'Product Designer', stage: 'Shortlisted', stageColor: '#0d9488', stageBg: '#f0fdfa', time: '4h ago' },
-    { name: 'Ananya Rao', avatar: avatar3, role: 'Data Analyst', stage: 'Interview', stageColor: '#d97706', stageBg: '#fffbeb', time: '6h ago' },
-    { name: 'Vikram Singh', avatar: avatar4, role: 'Frontend Developer', stage: 'Applied', stageColor: '#6929e2', stageBg: '#f3edff', time: '8h ago' },
-    { name: 'Neha Gupta', avatar: avatar5, role: 'QA Engineer', stage: 'Applied', stageColor: '#6929e2', stageBg: '#f3edff', time: '10h ago' }
-  ];
+  // Recent applications (from backend)
+  const recentApplications = (dashboardData?.recent_applications || []).map((a, idx) => {
+    const key = String(a.stage || '').toLowerCase();
+    const meta = stageStyleMap[key] || { label: a.stage || 'Applied', color: '#6929e2', bg: '#f3edff' };
+    return {
+      id: a.id || idx,
+      name: a.candidate_name || 'Unknown Candidate',
+      avatar: avatars[idx % avatars.length],
+      role: a.role || '—',
+      stage: meta.label,
+      stageColor: meta.color,
+      stageBg: meta.bg,
+      time: formatRelTime(a.applied_at)
+    };
+  });
 
-  // Upcoming interviews
-  const upcomingInterviews = [
-    { name: 'Arjun Nair', avatar: avatar2, role: 'Backend Developer', time: 'Today, 10:00 AM' },
-    { name: 'Sneha Iyer', avatar: avatar1, role: 'Product Designer', time: 'Today, 11:30 AM' },
-    { name: 'Karan Patel', avatar: avatar4, role: 'Frontend Developer', time: 'Tomorrow, 2:00 PM' },
-    { name: 'Meera Joshi', avatar: avatar3, role: 'Data Analyst', time: 'Tomorrow, 4:30 PM' },
-    { name: 'Rohit Kumar', avatar: avatar5, role: 'QA Engineer', time: 'Fri, 11:00 AM' }
-  ];
+  // Upcoming interviews (from backend)
+  const upcomingInterviews = (dashboardData?.upcoming_interviews || []).map((iv, idx) => ({
+    id: iv.id || idx,
+    name: iv.candidate_name || 'Unknown Candidate',
+    avatar: avatars[idx % avatars.length],
+    role: iv.role || '—',
+    time: formatScheduleTime(iv.scheduled_at)
+  }));
 
-  // Top jobs
-  const topJobs = [
-    { title: 'Software Engineer', apps: '1,245', views: '142', growth: '↑ 22%' },
-    { title: 'Product Designer', apps: '892', views: '98', growth: '↑ 18%' },
-    { title: 'Data Analyst', apps: '756', views: '76', growth: '↑ 16%' },
-    { title: 'Frontend Developer', apps: '623', views: '54', growth: '↑ 12%' },
-    { title: 'QA Engineer', apps: '512', views: '43', growth: '↑ 10%' }
-  ];
+  // Top jobs (from backend)
+  const topJobs = (dashboardData?.top_jobs || []).map((j) => ({
+    id: j.id,
+    title: j.title,
+    apps: String(j.applications ?? 0),
+    views: String(j.views ?? 0)
+  }));
 
-  // Activity list
-  const recentActivities = [
-    {
-      title: 'New application received',
-      desc: 'by Priya Sharma for Software Engineer',
-      time: '2h ago',
-      color: '#2563eb',
-      bg: '#eff6ff'
-    },
-    {
-      title: 'Candidate moved to Shortlisted',
-      desc: 'by Rahul Mehta',
-      time: '4h ago',
-      color: '#0d9488',
-      bg: '#f0fdfa'
-    },
-    {
-      title: 'Internship application received',
-      desc: 'by Ananya Rao for UI/UX Intern',
-      time: '6h ago',
-      color: '#f59e0b',
-      bg: '#fffbeb'
-    },
-    {
-      title: 'Offer accepted',
-      desc: 'by Vikram Singh for Data Analyst',
-      time: '8h ago',
-      color: '#10b981',
-      bg: '#ecfdf5'
-    },
-    {
-      title: 'Requisition REQ-0018 approved',
-      desc: 'by HR Team',
-      time: '1d ago',
-      color: '#7c3aed',
-      bg: '#f5f3ff'
+  // Activity list (from backend)
+  const recentActivities = (dashboardData?.recent_activity || []).map((act, idx) => {
+    const palette = [
+      { color: '#2563eb', bg: '#eff6ff' },
+      { color: '#0d9488', bg: '#f0fdfa' },
+      { color: '#f59e0b', bg: '#fffbeb' },
+      { color: '#10b981', bg: '#ecfdf5' },
+      { color: '#7c3aed', bg: '#f5f3ff' }
+    ];
+    const p = palette[idx % palette.length];
+    return {
+      title: act.title || 'Activity',
+      desc: act.description || '',
+      time: formatRelTime(act.created_at),
+      color: p.color,
+      bg: p.bg
+    };
+  });
+
+  // Dynamic SVG points for pipeline trend
+  const trendPoints = dashboardData?.pipeline_trend || [];
+  const maxTrendVal = Math.max(1, ...trendPoints.map((pt) => Math.max(pt.applications || 0, pt.hires || 0)));
+  const buildPolyline = (key) => {
+    if (trendPoints.length === 0) return '';
+    if (trendPoints.length === 1) {
+      const y = 180 - ((trendPoints[0][key] || 0) / maxTrendVal) * 140;
+      return `20,${y} 490,${y}`;
     }
-  ];
+    return trendPoints
+      .map((pt, idx) => {
+        const x = 20 + (idx / (trendPoints.length - 1)) * 470;
+        const y = 180 - ((pt[key] || 0) / maxTrendVal) * 140;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+  };
+  const appsPolyline = buildPolyline('applications');
+  const hiresPolyline = buildPolyline('hires');
 
   return (
     <Box sx={{ width: '100%', minHeight: '100%', pb: 5 }}>
@@ -526,43 +581,28 @@ export default function AdminDashboard() {
                       <line x1="0" y1="120" x2="500" y2="120" stroke="#e5e7eb" strokeDasharray="3 3" />
                       <line x1="0" y1="165" x2="500" y2="165" stroke="#e5e7eb" strokeDasharray="3 3" />
 
-                      {/* Purple Applications Area & Curve */}
-                      <path
-                        d="M 20 120 C 80 110, 140 140, 200 100 C 260 70, 320 95, 380 60 C 440 30, 470 50, 490 35 L 490 185 L 20 185 Z"
-                        fill="url(#purpleGradient)"
-                      />
-                      <path
-                        d="M 20 120 C 80 110, 140 140, 200 100 C 260 70, 320 95, 380 60 C 440 30, 470 50, 490 35"
-                        fill="none"
-                        stroke="#6929e2"
-                        strokeWidth="3"
-                      />
+                      {/* Purple Applications Curve */}
+                      {appsPolyline && (
+                        <polyline points={appsPolyline} fill="none" stroke="#6929e2" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                      )}
 
                       {/* Green Hires Curve */}
-                      <path
-                        d="M 20 175 C 80 170, 140 178, 200 168 C 260 162, 320 170, 380 155 C 440 150, 470 160, 490 145"
-                        fill="none"
-                        stroke="#10b981"
-                        strokeWidth="2.5"
-                      />
+                      {hiresPolyline && (
+                        <polyline points={hiresPolyline} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      )}
 
-                      {/* Data Dots */}
-                      <circle cx="20" cy="120" r="4" fill="#6929e2" />
-                      <circle cx="200" cy="100" r="4" fill="#6929e2" />
-                      <circle cx="380" cy="60" r="4" fill="#6929e2" />
-                      <circle cx="490" cy="35" r="4" fill="#6929e2" />
-
-                      <circle cx="20" cy="175" r="3.5" fill="#10b981" />
-                      <circle cx="200" cy="168" r="3.5" fill="#10b981" />
-                      <circle cx="380" cy="155" r="3.5" fill="#10b981" />
-                      <circle cx="490" cy="145" r="3.5" fill="#10b981" />
+                      {trendPoints.length === 0 && (
+                        <text x="260" y="105" textAnchor="middle" fill="#9ca3af" fontSize="13">
+                          {loading ? 'Loading trend data...' : 'No application trend data for this period'}
+                        </text>
+                      )}
                     </svg>
 
                     {/* X-axis labels */}
                     <Stack direction="row" justifyContent="space-between" sx={{ mt: 1, px: 1 }}>
-                      {['Oct 1', 'Oct 7', 'Oct 14', 'Oct 21', 'Oct 28'].map((date) => (
-                        <Typography key={date} sx={{ fontSize: 11, color: '#9ca3af' }}>
-                          {date}
+                      {trendPoints.slice(0, 6).map((pt) => (
+                        <Typography key={pt.date} sx={{ fontSize: 11, color: '#9ca3af' }}>
+                          {pt.date}
                         </Typography>
                       ))}
                     </Stack>
@@ -647,10 +687,10 @@ export default function AdminDashboard() {
                   Quick Actions
                 </Typography>
                 <Typography
-                  onClick={() => handleOpenDialog('All Recruitment Actions', 'actions')}
+                  onClick={() => navigate('/admin/analytics')}
                   sx={{ fontSize: 12, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}
                 >
-                  View all →
+                  Analytics →
                 </Typography>
               </Stack>
 
@@ -661,28 +701,32 @@ export default function AdminDashboard() {
                     desc: 'Post a new job vacancy',
                     color: '#6929e2',
                     bg: '#f3edff',
-                    icon: <PlusOutlined />
+                    icon: <PlusOutlined />,
+                    path: '/admin/jobs'
                   },
                   {
                     title: 'Create Requisition',
                     desc: 'Request a new headcount',
                     color: '#2563eb',
                     bg: '#eff6ff',
-                    icon: <FileTextOutlined />
+                    icon: <FileTextOutlined />,
+                    path: '/admin/requisitions'
                   },
                   {
                     title: 'Upload Resume',
                     desc: 'Add & parse candidate resumes',
                     color: '#7c3aed',
                     bg: '#f5f3ff',
-                    icon: <UploadOutlined />
+                    icon: <UploadOutlined />,
+                    path: '/admin/ai-studio'
                   },
                   {
                     title: 'Create Internship',
                     desc: 'Post a new internship opportunity',
                     color: '#db2777',
                     bg: '#fdf2f8',
-                    icon: <ReadOutlined />
+                    icon: <ReadOutlined />,
+                    path: '/admin/internships'
                   }
                 ].map((act) => (
                   <Stack
@@ -690,7 +734,7 @@ export default function AdminDashboard() {
                     direction="row"
                     alignItems="center"
                     justifyContent="space-between"
-                    onClick={() => handleOpenDialog(act.title, act.title.toLowerCase())}
+                    onClick={() => navigate(act.path)}
                     sx={{
                       p: 1.2,
                       borderRadius: '12px',
@@ -754,7 +798,7 @@ export default function AdminDashboard() {
               <Typography sx={{ fontSize: 14.5, fontWeight: 800, color: '#111827' }}>
                 Recent Applications
               </Typography>
-              <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
+              <Typography onClick={() => navigate('/admin/applications')} sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
                 View all →
               </Typography>
             </Stack>
@@ -770,8 +814,15 @@ export default function AdminDashboard() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {recentApplications.map((cand) => (
-                    <TableRow key={cand.name} hover>
+                  {recentApplications.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} align="center" sx={{ py: 3, fontSize: 12, color: '#9ca3af' }}>
+                        {loading ? 'Loading...' : 'No recent applications yet'}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    recentApplications.map((cand) => (
+                      <TableRow key={cand.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate('/admin/applications')}>
                       <TableCell sx={{ px: 0.5, py: 1.1 }}>
                         <Stack direction="row" alignItems="center" spacing={0.75}>
                           <Avatar src={cand.avatar} sx={{ width: 24, height: 24 }} />
@@ -800,7 +851,7 @@ export default function AdminDashboard() {
                         {cand.time}
                       </TableCell>
                     </TableRow>
-                  ))}
+                  )))}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -824,7 +875,7 @@ export default function AdminDashboard() {
               <Typography sx={{ fontSize: 14.5, fontWeight: 800, color: '#111827' }}>
                 Upcoming Interviews
               </Typography>
-              <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
+              <Typography onClick={() => navigate('/admin/applications')} sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
                 View all →
               </Typography>
             </Stack>
@@ -839,8 +890,15 @@ export default function AdminDashboard() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {upcomingInterviews.map((item) => (
-                    <TableRow key={item.name} hover>
+                  {upcomingInterviews.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} align="center" sx={{ py: 3, fontSize: 12, color: '#9ca3af' }}>
+                        {loading ? 'Loading...' : 'No upcoming interviews scheduled'}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    upcomingInterviews.map((item) => (
+                      <TableRow key={item.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate('/admin/applications')}>
                       <TableCell sx={{ px: 0.5, py: 1.1 }}>
                         <Stack direction="row" alignItems="center" spacing={0.75}>
                           <Avatar src={item.avatar} sx={{ width: 24, height: 24 }} />
@@ -856,7 +914,7 @@ export default function AdminDashboard() {
                         {item.time}
                       </TableCell>
                     </TableRow>
-                  ))}
+                  )))}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -880,7 +938,7 @@ export default function AdminDashboard() {
               <Typography sx={{ fontSize: 14.5, fontWeight: 800, color: '#111827' }}>
                 Top Jobs by Applications
               </Typography>
-              <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
+              <Typography onClick={() => navigate('/admin/jobs')} sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
                 View all →
               </Typography>
             </Stack>
@@ -891,29 +949,33 @@ export default function AdminDashboard() {
                   <TableRow>
                     <TableCell sx={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', px: 0.5 }}>Job Title</TableCell>
                     <TableCell sx={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', px: 0.5 }}>Apps</TableCell>
-                    <TableCell sx={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', px: 0.5 }}>Views</TableCell>
-                    <TableCell align="right" sx={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', px: 0.5 }}>Growth</TableCell>
+                    <TableCell align="right" sx={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', px: 0.5 }}>Views</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {topJobs.map((job) => (
-                    <TableRow key={job.title} hover>
-                      <TableCell sx={{ px: 0.5, py: 1.1 }}>
-                        <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap' }}>
-                          • {job.title}
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ px: 0.5, py: 1.1, fontSize: 11.5, fontWeight: 600, color: '#4b5563' }}>
-                        {job.apps}
-                      </TableCell>
-                      <TableCell sx={{ px: 0.5, py: 1.1, fontSize: 11.5, color: '#6b7280' }}>
-                        {job.views}
-                      </TableCell>
-                      <TableCell align="right" sx={{ px: 0.5, py: 1.1, fontSize: 11, fontWeight: 700, color: '#059669' }}>
-                        {job.growth}
+                  {topJobs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={3} align="center" sx={{ py: 3, fontSize: 12, color: '#9ca3af' }}>
+                        {loading ? 'Loading...' : 'No jobs posted yet'}
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    topJobs.map((job) => (
+                      <TableRow key={job.id || job.title} hover sx={{ cursor: 'pointer' }} onClick={() => navigate('/admin/jobs')}>
+                        <TableCell sx={{ px: 0.5, py: 1.1 }}>
+                          <Typography sx={{ fontSize: 12, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap' }}>
+                            • {job.title}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ px: 0.5, py: 1.1, fontSize: 11.5, fontWeight: 600, color: '#4b5563' }}>
+                          {job.apps}
+                        </TableCell>
+                        <TableCell align="right" sx={{ px: 0.5, py: 1.1, fontSize: 11.5, color: '#6b7280' }}>
+                          {job.views}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -937,14 +999,19 @@ export default function AdminDashboard() {
               <Typography sx={{ fontSize: 14.5, fontWeight: 800, color: '#111827' }}>
                 Recent Activity
               </Typography>
-              <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
+              <Typography onClick={() => navigate('/admin/settings?tab=audit')} sx={{ fontSize: 11.5, fontWeight: 700, color: '#6929e2', cursor: 'pointer' }}>
                 View all →
               </Typography>
             </Stack>
 
             <Stack spacing={1.6}>
-              {recentActivities.map((act, i) => (
-                <Stack key={i} direction="row" alignItems="flex-start" spacing={1.25}>
+              {recentActivities.length === 0 ? (
+                <Typography sx={{ fontSize: 12, color: '#9ca3af', py: 2, textAlign: 'center' }}>
+                  {loading ? 'Loading...' : 'No recent activity yet'}
+                </Typography>
+              ) : (
+                recentActivities.map((act, i) => (
+                  <Stack key={i} direction="row" alignItems="flex-start" spacing={1.25}>
                   <Box
                     sx={{
                       width: 8,
@@ -967,7 +1034,7 @@ export default function AdminDashboard() {
                     {act.time}
                   </Typography>
                 </Stack>
-              ))}
+              )))}
             </Stack>
           </Card>
         </Grid>
@@ -1012,26 +1079,26 @@ export default function AdminDashboard() {
             <Grid container spacing={2}>
               <Grid size={{ xs: 6, sm: 3 }}>
                 <Typography sx={{ fontSize: 11.5, color: '#6b7280', mb: 0.5 }}>Time to Hire</Typography>
-                <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>18 days</Typography>
-                <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#059669' }}>↓ 35%</Typography>
+                <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>{insights.time_to_hire_days ?? 0} days</Typography>
+                <Typography sx={{ fontSize: 11.5, fontWeight: 600, color: '#6b7280' }}>Avg from applied to hired</Typography>
               </Grid>
 
               <Grid size={{ xs: 6, sm: 3 }}>
                 <Typography sx={{ fontSize: 11.5, color: '#6b7280', mb: 0.5 }}>Time to Fill</Typography>
-                <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>24 days</Typography>
-                <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#059669' }}>↓ 28%</Typography>
+                <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>{insights.time_to_fill_days ?? 0} days</Typography>
+                <Typography sx={{ fontSize: 11.5, fontWeight: 600, color: '#6b7280' }}>Avg requisition fill time</Typography>
               </Grid>
 
               <Grid size={{ xs: 6, sm: 3 }}>
                 <Typography sx={{ fontSize: 11.5, color: '#6b7280', mb: 0.5 }}>Offer Acceptance Rate</Typography>
-                <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>86%</Typography>
-                <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#059669' }}>↑ 12%</Typography>
+                <Typography sx={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>{insights.offer_acceptance_rate ?? 0}%</Typography>
+                <Typography sx={{ fontSize: 11.5, fontWeight: 600, color: '#6b7280' }}>Hired vs offered</Typography>
               </Grid>
 
               <Grid size={{ xs: 6, sm: 3 }}>
                 <Typography sx={{ fontSize: 11.5, color: '#6b7280', mb: 0.5 }}>Top Source</Typography>
-                <Typography sx={{ fontSize: 20, fontWeight: 800, color: '#0077b5' }}>LinkedIn</Typography>
-                <Typography sx={{ fontSize: 11.5, color: '#6b7280' }}>32% of hires</Typography>
+                <Typography sx={{ fontSize: 20, fontWeight: 800, color: '#0077b5' }}>{insights.top_source || 'N/A'}</Typography>
+                <Typography sx={{ fontSize: 11.5, color: '#6b7280' }}>Primary candidate source</Typography>
               </Grid>
             </Grid>
           </Grid>
@@ -1043,79 +1110,30 @@ export default function AdminDashboard() {
                 Applications by Source
               </Typography>
               <Stack spacing={1}>
-                {[
-                  { name: 'LinkedIn', pct: '32%' },
-                  { name: 'Indeed', pct: '24%' },
-                  { name: 'Employee Referrals', pct: '18%' },
-                  { name: 'Company Careers', pct: '14%' },
-                  { name: 'Others', pct: '12%' }
-                ].map((src) => (
-                  <Stack key={src.name} direction="row" alignItems="center" spacing={2}>
-                    <Typography sx={{ fontSize: 11.5, color: '#6b7280', width: 120 }}>
-                      {src.name}
-                    </Typography>
-                    <Box sx={{ flexGrow: 1, bgcolor: '#f3f4f6', height: 7, borderRadius: 4, overflow: 'hidden' }}>
-                      <Box sx={{ width: src.pct, height: '100%', bgcolor: '#6929e2', borderRadius: 4 }} />
-                    </Box>
-                    <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#111827', width: 30, textAlign: 'right' }}>
-                      {src.pct}
-                    </Typography>
-                  </Stack>
-                ))}
+                {(insights.applications_by_source || []).length === 0 ? (
+                  <Typography sx={{ fontSize: 12, color: '#9ca3af' }}>
+                    {loading ? 'Loading...' : 'No application source data yet'}
+                  </Typography>
+                ) : (
+                  (insights.applications_by_source || []).map((src) => (
+                    <Stack key={src.source} direction="row" alignItems="center" spacing={2}>
+                      <Typography sx={{ fontSize: 11.5, color: '#6b7280', width: 120 }}>
+                        {src.source}
+                      </Typography>
+                      <Box sx={{ flexGrow: 1, bgcolor: '#f3f4f6', height: 7, borderRadius: 4, overflow: 'hidden' }}>
+                        <Box sx={{ width: `${Math.min(100, Number(src.percentage) || 0)}%`, height: '100%', bgcolor: '#6929e2', borderRadius: 4 }} />
+                      </Box>
+                      <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: '#111827', width: 38, textAlign: 'right' }}>
+                        {src.percentage}%
+                      </Typography>
+                    </Stack>
+                  ))
+                )}
               </Stack>
             </Box>
           </Grid>
         </Grid>
       </Card>
-
-      {/* ========================================================================= */}
-      {/* 6. MODAL DIALOG FOR QUICK ACTIONS & AI STUDIO                             */}
-      {/* ========================================================================= */}
-      <Dialog open={dialogOpen} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ m: 0, p: 2.5, fontWeight: 800, color: '#111827' }}>
-          {dialogTitle}
-          <IconButton
-            onClick={handleCloseDialog}
-            sx={{ position: 'absolute', right: 12, top: 12, color: '#9ca3af' }}
-          >
-            <CloseOutlined />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers sx={{ p: 3 }}>
-          {dialogType === 'ai-studio' ? (
-            <Stack spacing={2}>
-              <Typography sx={{ fontSize: 13.5, color: '#4b5563' }}>
-                TraceU AI Studio is ready. Generate optimized job specifications, candidate rank matches, or extract key skills from uploaded resumes.
-              </Typography>
-              <TextField
-                fullWidth
-                multiline
-                rows={3}
-                label="Job Description Prompt or Candidate Profile"
-                placeholder="E.g., Senior Full Stack React & Node Engineer with 5+ years experience..."
-              />
-            </Stack>
-          ) : (
-            <Stack spacing={2}>
-              <TextField fullWidth label="Title / Name" placeholder="Enter title..." />
-              <TextField fullWidth label="Department / Role" placeholder="E.g. Engineering, Product..." />
-              <TextField fullWidth multiline rows={2} label="Requirements & Notes" placeholder="Add specific notes..." />
-            </Stack>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button onClick={handleCloseDialog} sx={{ textTransform: 'none', color: '#6b7280' }}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleCloseDialog}
-            sx={{ bgcolor: '#6929e2', textTransform: 'none', fontWeight: 700, '&:hover': { bgcolor: '#5b1fd9' } }}
-          >
-            Submit
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 }

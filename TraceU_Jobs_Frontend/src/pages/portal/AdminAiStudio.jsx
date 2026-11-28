@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getCandidates, updateCandidate } from 'api/adminCandidates';
+import { getJobs } from 'api/adminJobs';
 
 // material-ui
 import Box from '@mui/material/Box';
@@ -53,67 +55,173 @@ import avatar5 from 'assets/images/users/avatar-5.png';
 
 export default function AdminAiStudio() {
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
 
   // Active top tab
   const [activeTab, setActiveTab] = useState(0); // 0: Resume OCR, 1: AI Suggestions, 2: Candidate Matching, 3: Job Description, 4: Smart Search
   const [zoomLevel, setZoomLevel] = useState(100);
-  const [selectedUpload, setSelectedUpload] = useState('Priya_Sharma_Resume.pdf');
+  const [candidatesList, setCandidatesList] = useState([]);
+  const [jobsList, setJobsList] = useState([]);
+  const [selectedCandidateId, setSelectedCandidateId] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [openEditDialog, setOpenEditDialog] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
-  // Extracted info editable fields
+  // Extracted info editable fields (hydrated from selected real candidate)
   const [extractedInfo, setExtractedInfo] = useState({
-    name: 'Priya Sharma',
-    email: 'priya.sharma@email.com',
-    phone: '+91 98765 43210',
-    location: 'Bengaluru, Karnataka',
-    role: 'Software Engineer',
-    exp: '2+ years'
+    name: '',
+    email: '',
+    phone: '',
+    location: '',
+    role: '',
+    exp: '',
+    skills: []
   });
 
-  const uploads = [
-    {
-      id: 1,
-      name: 'Priya_Sharma_Resume.pdf',
-      size: '2.4 MB',
-      status: 'Parsed',
-      time: 'Oct 21, 2025, 10:30 AM',
-      type: 'pdf'
-    },
-    {
-      id: 2,
-      name: 'Rahul_Kumar_Resume.docx',
-      size: '1.8 MB',
-      status: 'Parsed',
-      time: 'Oct 21, 2025, 09:15 AM',
-      type: 'doc'
-    },
-    {
-      id: 3,
-      name: 'Sneha_Iyer_Resume.pdf',
-      size: '2.1 MB',
-      status: 'Processing',
-      time: 'Oct 21, 2025, 08:45 AM',
-      type: 'pdf'
-    },
-    {
-      id: 4,
-      name: 'Arjun_Nair_Resume.jpg',
-      size: '3.2 MB',
-      status: 'Failed',
-      time: 'Oct 20, 2025, 06:20 PM',
-      type: 'img'
+  const syncFromCandidate = (cand) => {
+    if (!cand) {
+      setExtractedInfo({ name: '', email: '', phone: '', location: '', role: '', exp: '', skills: [] });
+      return;
     }
-  ];
+    const rawSkills = Array.isArray(cand.skills)
+      ? cand.skills
+      : typeof cand.skills === 'string'
+        ? cand.skills
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+    setExtractedInfo({
+      name: cand.name || '',
+      email: cand.email || '',
+      phone: cand.phone || '',
+      location: cand.location || '',
+      role: cand.role || cand.current_role || '',
+      exp: cand.experience || '',
+      skills: rawSkills
+    });
+  };
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([getCandidates().catch(() => ({ data: [] })), getJobs().catch(() => ({ data: [] }))]).then(([cRes, jRes]) => {
+      if (!active) return;
+      const cList = Array.isArray(cRes?.data) ? cRes.data : Array.isArray(cRes) ? cRes : [];
+      const jList = Array.isArray(jRes?.data) ? jRes.data : Array.isArray(jRes) ? jRes : [];
+      setCandidatesList(cList);
+      setJobsList(jList);
+      if (cList.length > 0) {
+        setSelectedCandidateId(cList[0].id);
+        syncFromCandidate(cList[0]);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const selectedCandidate = candidatesList.find((c) => c.id === selectedCandidateId) || null;
+  const selectedUpload = selectedCandidate
+    ? `${(selectedCandidate.name || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf`
+    : 'No Resume Selected';
+
+  const uploads = candidatesList.map((c) => ({
+    id: c.id,
+    name: `${(c.name || 'Candidate').replace(/\s+/g, '_')}_Resume.pdf`,
+    size: c.resume_url ? 'PDF' : 'Profile',
+    status: 'Parsed',
+    time: c.created_at ? new Date(c.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Saved',
+    type: 'pdf',
+    candidate: c
+  }));
 
   const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     setIsProcessing(true);
     setTimeout(() => {
       setIsProcessing(false);
-      setSnackbar({ open: true, message: 'Document uploaded and parsed with OCR successfully!', severity: 'success' });
-    }, 1200);
+      setSnackbar({
+        open: true,
+        message: `Selected "${file.name}". Add or edit candidate details on the right panel to save.`,
+        severity: 'info'
+      });
+    }, 400);
+    e.target.value = '';
   };
+
+  const handleSaveExtractedInfo = async () => {
+    if (!selectedCandidate) {
+      setOpenEditDialog(false);
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await updateCandidate(selectedCandidate.id, {
+        name: extractedInfo.name,
+        email: extractedInfo.email,
+        phone: extractedInfo.phone,
+        location: extractedInfo.location,
+        role: extractedInfo.role,
+        experience: extractedInfo.exp
+      });
+      setCandidatesList((prev) =>
+        prev.map((c) =>
+          c.id === selectedCandidate.id
+            ? {
+                ...c,
+                name: extractedInfo.name,
+                email: extractedInfo.email,
+                phone: extractedInfo.phone,
+                location: extractedInfo.location,
+                role: extractedInfo.role,
+                experience: extractedInfo.exp
+              }
+            : c
+        )
+      );
+      setOpenEditDialog(false);
+      setSnackbar({ open: true, message: 'Candidate information updated in database!', severity: 'success' });
+    } catch (err) {
+      setSnackbar({ open: true, message: err.message || 'Failed to update candidate', severity: 'error' });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDownloadReport = () => {
+    if (!selectedCandidate) {
+      setSnackbar({ open: true, message: 'No candidate selected to export', severity: 'warning' });
+      return;
+    }
+    const blob = new Blob([JSON.stringify(extractedInfo, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(extractedInfo.name || 'candidate').replace(/\s+/g, '_')}_parsed.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSnackbar({ open: true, message: `Downloaded parsed profile for ${extractedInfo.name}`, severity: 'success' });
+  };
+
+  const similarCandidates = candidatesList
+    .filter((c) => c.id !== selectedCandidateId)
+    .slice(0, 3)
+    .map((c, idx) => ({
+      id: c.id,
+      name: c.name || 'Candidate',
+      role: c.role || c.current_role || 'Applicant',
+      exp: c.experience || '—',
+      loc: c.location || '—',
+      avatar: [avatar1, avatar3, avatar4, avatar5][idx % 4]
+    }));
+
+  const primaryJob = jobsList[0] || null;
 
   return (
     <Box sx={{ width: '100%', minHeight: '100%', pb: 5 }}>
@@ -352,6 +460,13 @@ export default function AdminAiStudio() {
               >
                 {isProcessing ? 'Processing OCR...' : 'Upload Files'}
               </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx,.txt"
+                style={{ display: 'none' }}
+                onChange={handleFileSelected}
+              />
             </Card>
 
             {/* Recent Uploads List */}
@@ -366,57 +481,70 @@ export default function AdminAiStudio() {
             >
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
                 <Typography variant="h3" sx={{ fontWeight: 600, color: '#111827', fontSize: 16 }}>
-                  Recent Uploads
+                  Candidate Resumes
                 </Typography>
-                <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}>
+                <Typography
+                  variant="caption"
+                  onClick={() => navigate('/admin/candidates')}
+                  sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}
+                >
                   View all →
                 </Typography>
               </Stack>
 
               <Stack spacing={1.5}>
-                {uploads.map((up) => {
-                  const isSelected = selectedUpload === up.name;
-                  return (
-                    <Box
-                      key={up.id}
-                      onClick={() => setSelectedUpload(up.name)}
-                      sx={{
-                        p: 1.2,
-                        borderRadius: '10px',
-                        border: isSelected ? '1px solid #C084FC' : '1px solid #F3F4F6',
-                        bgcolor: isSelected ? 'rgba(83, 14, 240, 0.04)' : '#FFF',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                        '&:hover': { bgcolor: 'rgba(83, 14, 240, 0.06)' }
-                      }}
-                    >
-                      <Stack direction="row" spacing={1.2} alignItems="center" sx={{ maxWidth: '82%' }}>
-                        {up.type === 'pdf' && <FilePdfOutlined style={{ fontSize: 24, color: '#EF4444' }} />}
-                        {up.type === 'doc' && <FileWordOutlined style={{ fontSize: 24, color: '#2563EB' }} />}
-                        {up.type === 'img' && <FileImageOutlined style={{ fontSize: 24, color: '#F59E0B' }} />}
-                        <Box sx={{ overflow: 'hidden' }}>
-                          <Typography
-                            variant="body2"
-                            sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}
-                            noWrap
-                          >
-                            {up.name}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: '#9CA3AF', fontSize: 11, display: 'block' }}>
-                            {up.size} • {up.status} • {up.time}
-                          </Typography>
-                        </Box>
-                      </Stack>
+                {uploads.length === 0 ? (
+                  <Typography variant="caption" sx={{ color: '#9CA3AF', py: 2, textAlign: 'center' }}>
+                    No candidates found in database yet.
+                  </Typography>
+                ) : (
+                  uploads.map((up) => {
+                    const isSelected = selectedCandidateId === up.id;
+                    return (
+                      <Box
+                        key={up.id}
+                        onClick={() => {
+                          setSelectedCandidateId(up.id);
+                          syncFromCandidate(up.candidate);
+                        }}
+                        sx={{
+                          p: 1.2,
+                          borderRadius: '10px',
+                          border: isSelected ? '1px solid #C084FC' : '1px solid #F3F4F6',
+                          bgcolor: isSelected ? 'rgba(83, 14, 240, 0.04)' : '#FFF',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          '&:hover': { bgcolor: 'rgba(83, 14, 240, 0.06)' }
+                        }}
+                      >
+                        <Stack direction="row" spacing={1.2} alignItems="center" sx={{ maxWidth: '82%' }}>
+                          {up.type === 'pdf' && <FilePdfOutlined style={{ fontSize: 24, color: '#EF4444' }} />}
+                          {up.type === 'doc' && <FileWordOutlined style={{ fontSize: 24, color: '#2563EB' }} />}
+                          {up.type === 'img' && <FileImageOutlined style={{ fontSize: 24, color: '#F59E0B' }} />}
+                          <Box sx={{ overflow: 'hidden' }}>
+                            <Typography
+                              variant="body2"
+                              sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}
+                              noWrap
+                            >
+                              {up.name}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: '#9CA3AF', fontSize: 11, display: 'block' }}>
+                              {up.size} • {up.status} • {up.time}
+                            </Typography>
+                          </Box>
+                        </Stack>
 
-                      {up.status === 'Parsed' && <CheckCircleFilled style={{ color: '#10B981', fontSize: 16 }} />}
-                      {up.status === 'Processing' && <CircularProgress size={16} sx={{ color: '#3B82F6' }} />}
-                      {up.status === 'Failed' && <CloseCircleFilled style={{ color: '#EF4444', fontSize: 16 }} />}
-                    </Box>
-                  );
-                })}
+                        {up.status === 'Parsed' && <CheckCircleFilled style={{ color: '#10B981', fontSize: 16 }} />}
+                        {up.status === 'Processing' && <CircularProgress size={16} sx={{ color: '#3B82F6' }} />}
+                        {up.status === 'Failed' && <CloseCircleFilled style={{ color: '#EF4444', fontSize: 16 }} />}
+                      </Box>
+                    );
+                  })
+                )}
               </Stack>
             </Card>
           </Stack>
@@ -475,7 +603,7 @@ export default function AdminAiStudio() {
                 <IconButton
                   size="small"
                   sx={{ color: '#FFF' }}
-                  onClick={() => setSnackbar({ open: true, message: `Downloading parsed AI resume analysis report for ${selectedUpload}...`, severity: 'success' })}
+                  onClick={handleDownloadReport}
                 >
                   <DownloadOutlined style={{ fontSize: 14 }} />
                 </IconButton>
@@ -508,26 +636,28 @@ export default function AdminAiStudio() {
                     <Avatar src={avatar1} sx={{ width: 44, height: 44 }} />
                     <Box>
                       <Typography variant="h6" sx={{ fontWeight: 700, color: '#111827', fontSize: 14 }}>
-                        Priya Sharma
+                        {extractedInfo.name || 'No Candidate Selected'}
                       </Typography>
                       <Typography variant="caption" sx={{ color: '#6B7280', fontWeight: 500, fontSize: 12 }}>
-                        Software Engineer
+                        {extractedInfo.role || '—'}
                       </Typography>
                     </Box>
                   </Stack>
 
                   <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11, display: 'block', mb: 1.5 }}>
-                    priya.sharma@email.com • +91 98765 43210
+                    {extractedInfo.email || '—'} {extractedInfo.phone ? `• ${extractedInfo.phone}` : ''}
                     <br />
-                    linkedin.com/in/priya-sharma
+                    {extractedInfo.location || '—'}
                   </Typography>
 
                   {/* Summary */}
                   <Typography variant="caption" sx={{ fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Summary
+                    Profile Overview
                   </Typography>
                   <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 11.5, lineHeight: 1.5, my: 0.8 }}>
-                    Results-driven Software Engineer with 2+ years of experience in building scalable web applications using React, Node.js and cloud technologies. Passionate about clean code and great user experiences.
+                    {selectedCandidate
+                      ? `${extractedInfo.name} (${extractedInfo.role || 'Candidate'}) with ${extractedInfo.exp || 'relevant'} experience, located in ${extractedInfo.location || 'N/A'}.`
+                      : 'Select a candidate from the list to view their parsed resume details.'}
                   </Typography>
 
                   {/* Experience */}
@@ -535,27 +665,7 @@ export default function AdminAiStudio() {
                     Experience
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12, mt: 0.5 }}>
-                    Software Engineer • TechSolutions Pvt. Ltd.
-                  </Typography>
-                  <Typography variant="caption" sx={{ color: '#9CA3AF', fontSize: 11, display: 'block', mb: 0.5 }}>
-                    Jun 2023 - Present
-                  </Typography>
-                  <Typography variant="body2" sx={{ color: '#4B5563', fontSize: 11, lineHeight: 1.5 }}>
-                    • Developed and maintained web applications using React and Node.js
-                    <br />
-                    • Worked with REST APIs and microservices
-                    <br />• Collaborated with cross-functional teams
-                  </Typography>
-
-                  {/* Education */}
-                  <Typography variant="caption" sx={{ fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', mt: 1.5 }}>
-                    Education
-                  </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12, mt: 0.5 }}>
-                    B.E. Computer Science • Anna University, Chennai
-                  </Typography>
-                  <Typography variant="caption" sx={{ color: '#9CA3AF', fontSize: 11, display: 'block', mb: 0.5 }}>
-                    2019 - 2023
+                    {extractedInfo.role || '—'} • {extractedInfo.exp || '—'}
                   </Typography>
 
                   {/* Skills */}
@@ -563,14 +673,18 @@ export default function AdminAiStudio() {
                     Skills
                   </Typography>
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-                    {['React', 'Node.js', 'JavaScript', 'TypeScript', 'HTML', 'CSS', 'REST APIs', 'Git', 'Docker', 'AWS', 'MongoDB'].map((s) => (
-                      <Chip
-                        key={s}
-                        label={s}
-                        size="small"
-                        sx={{ fontSize: 11, height: 20, bgcolor: '#F3F4F6', color: '#374151' }}
-                      />
-                    ))}
+                    {extractedInfo.skills.length === 0 ? (
+                      <Typography variant="caption" sx={{ color: '#9CA3AF' }}>No skills listed</Typography>
+                    ) : (
+                      extractedInfo.skills.map((s) => (
+                        <Chip
+                          key={s}
+                          label={s}
+                          size="small"
+                          sx={{ fontSize: 11, height: 20, bgcolor: '#F3F4F6', color: '#374151' }}
+                        />
+                      ))
+                    )}
                   </Box>
                 </Box>
               </Grid>
@@ -645,72 +759,35 @@ export default function AdminAiStudio() {
                     </Typography>
                   </Box>
 
-                  {/* Education */}
-                  <Box sx={{ pt: 1, borderTop: '1px solid #F3F4F6' }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="caption" sx={{ fontWeight: 700, color: '#374151' }}>
-                        Education
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}>
-                        + Add
-                      </Typography>
-                    </Stack>
-                    <Box sx={{ mt: 0.5, p: 1, bgcolor: '#F9FAFB', borderRadius: '6px' }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12 }}>
-                        B.E. Computer Science
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11, display: 'block' }}>
-                        Anna University, Chennai (2019 - 2023)
-                      </Typography>
-                    </Box>
-                  </Box>
-
                   {/* Key Skills */}
                   <Box sx={{ pt: 1, borderTop: '1px solid #F3F4F6' }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Typography variant="caption" sx={{ fontWeight: 700, color: '#374151' }}>
-                        Key Skills (8 found)
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}>
-                        + Add
+                        Key Skills ({extractedInfo.skills.length} found)
                       </Typography>
                     </Stack>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.8 }}>
-                      {['React', 'Node.js', 'JavaScript', 'TypeScript', 'HTML', 'CSS', 'REST APIs', 'Git'].map((sk) => (
-                        <Chip
-                          key={sk}
-                          label={sk}
-                          size="small"
-                          sx={{
-                            bgcolor: 'rgba(83, 14, 240, 0.06)',
-                            color: '#530EF0',
-                            fontWeight: 600,
-                            fontSize: 11,
-                            height: 22,
-                            borderRadius: '4px'
-                          }}
-                        />
-                      ))}
-                    </Box>
-                  </Box>
-
-                  {/* Certifications */}
-                  <Box sx={{ pt: 1, borderTop: '1px solid #F3F4F6' }}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="caption" sx={{ fontWeight: 700, color: '#374151' }}>
-                        Certifications (1 found)
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}>
-                        + Add
-                      </Typography>
-                    </Stack>
-                    <Box sx={{ mt: 0.5, p: 1, bgcolor: '#F9FAFB', borderRadius: '6px' }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12 }}>
-                        AWS Certified Developer
-                      </Typography>
-                      <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11, display: 'block' }}>
-                        Amazon Web Services
-                      </Typography>
+                      {extractedInfo.skills.length === 0 ? (
+                        <Typography variant="caption" sx={{ color: '#9CA3AF' }}>
+                          No skills recorded
+                        </Typography>
+                      ) : (
+                        extractedInfo.skills.map((sk) => (
+                          <Chip
+                            key={sk}
+                            label={sk}
+                            size="small"
+                            sx={{
+                              bgcolor: 'rgba(83, 14, 240, 0.06)',
+                              color: '#530EF0',
+                              fontWeight: 600,
+                              fontSize: 11,
+                              height: 22,
+                              borderRadius: '4px'
+                            }}
+                          />
+                        ))
+                      )}
                     </Box>
                   </Box>
                 </Stack>
@@ -951,47 +1028,61 @@ export default function AdminAiStudio() {
                 <Typography variant="h3" sx={{ fontWeight: 600, color: '#111827', fontSize: 16 }}>
                   Similar Candidates
                 </Typography>
-                <Typography variant="caption" sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}>
+                <Typography
+                  variant="caption"
+                  onClick={() => navigate('/admin/candidates')}
+                  sx={{ color: '#530EF0', fontWeight: 600, cursor: 'pointer' }}
+                >
                   View all →
                 </Typography>
               </Stack>
 
               <Stack spacing={1.5}>
-                {[
-                  { name: 'Sneha Iyer', match: '88%', exp: '2+ yrs', loc: 'Bengaluru', avatar: avatar3 },
-                  { name: 'Vikram Singh', match: '86%', exp: '3+ yrs', loc: 'Chennai', avatar: avatar5 },
-                  { name: 'Arjun Nair', match: '82%', exp: '4+ yrs', loc: 'Bengaluru', avatar: avatar4 }
-                ].map((cand, idx) => (
-                  <Stack key={idx} direction="row" justifyContent="space-between" alignItems="center">
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <Avatar src={cand.avatar} sx={{ width: 32, height: 32 }} />
-                      <Box>
-                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
-                          {cand.name}
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11 }}>
-                          {cand.match} match • {cand.exp} • {cand.loc}
-                        </Typography>
-                      </Box>
+                {similarCandidates.length === 0 ? (
+                  <Typography variant="caption" sx={{ color: '#9CA3AF' }}>
+                    No other candidates in database.
+                  </Typography>
+                ) : (
+                  similarCandidates.map((cand) => (
+                    <Stack key={cand.id} direction="row" justifyContent="space-between" alignItems="center">
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Avatar src={cand.avatar} sx={{ width: 32, height: 32 }} />
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: '#111827', fontSize: 12.5 }}>
+                            {cand.name}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#6B7280', fontSize: 11 }}>
+                            {cand.role} • {cand.exp} • {cand.loc}
+                          </Typography>
+                        </Box>
+                      </Stack>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          const found = candidatesList.find((c) => c.id === cand.id);
+                          if (found) {
+                            setSelectedCandidateId(found.id);
+                            syncFromCandidate(found);
+                          } else {
+                            navigate('/admin/candidates');
+                          }
+                        }}
+                        sx={{
+                          fontSize: 11,
+                          py: 0.2,
+                          px: 1,
+                          borderRadius: '6px',
+                          borderColor: '#E5E7EB',
+                          color: '#374151',
+                          textTransform: 'none'
+                        }}
+                      >
+                        View
+                      </Button>
                     </Stack>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => navigate('/admin/candidates')}
-                      sx={{
-                        fontSize: 11,
-                        py: 0.2,
-                        px: 1,
-                        borderRadius: '6px',
-                        borderColor: '#E5E7EB',
-                        color: '#374151',
-                        textTransform: 'none'
-                      }}
-                    >
-                      View
-                    </Button>
-                  </Stack>
-                ))}
+                  ))
+                )}
               </Stack>
             </Card>
           </Stack>
@@ -1053,13 +1144,11 @@ export default function AdminAiStudio() {
           </Button>
           <Button
             variant="contained"
-            onClick={() => {
-              setOpenEditDialog(false);
-              setSnackbar({ open: true, message: 'Extracted information updated!', severity: 'success' });
-            }}
+            disabled={savingEdit}
+            onClick={handleSaveExtractedInfo}
             sx={{ bgcolor: '#530EF0', textTransform: 'none', fontWeight: 600 }}
           >
-            Save Changes
+            {savingEdit ? 'Saving...' : 'Save Changes'}
           </Button>
         </DialogActions>
       </Dialog>
